@@ -136,17 +136,19 @@ io.on("connection", (socket) => {
   // START GAME
   socket.on("startGame", async ({ gameCode }) => {
     try {
-      const gameData = await Game.getGameData(gameCode);
-      // Add validation: only host can start, all players ready, etc.
-
+      // The game-service now handles validation (all connected players are ready)
       await Game.startGame(gameCode);
       const gameSeed = Math.floor(Math.random() * 3650);
 
       console.log(`Game ${gameCode} starting! with seed ${gameSeed}`);
       io.to(gameCode).emit("message", { type: "gameStarted", gameSeed });
     } catch (error) {
-      console.error(`Error starting game ${gameCode}:`, error);
-      // Optionally emit an error back to the requester
+      console.error(`Error starting game ${gameCode}:`, error.message);
+      // Let the client know why starting the game failed.
+      socket.emit("message", {
+        type: "error",
+        message: `Failed to start game: ${error.message}`,
+      });
     }
   });
 

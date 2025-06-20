@@ -182,6 +182,7 @@ export async function findGameByConnectionId(connectionId) {
   return gameDoc;
 }
 
+// game-service.js
 export async function addPlayerToGame(gameCode, playerId, connectionId) {
   const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
   const gameDoc = await gameRef.get();
@@ -199,8 +200,9 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       `Player ${players[playerIndex].displayName} (${playerId}) is rejoining.`
     );
     players[playerIndex].connectionId = connectionId;
-    players[playerIndex].disconnected = false;
-    players[playerIndex].inGame = false; // Reset in-game status
+    players[playerIndex].disconnected = false; // Player is now reconnected
+    players[playerIndex].inGame = false; // Ensure they are not marked as in-game
+    players[playerIndex].ready = false; // A rejoining player is never ready by default
 
     // If the game was hostless, this rejoining player becomes the new host.
     if (needsHost) {
@@ -342,11 +344,30 @@ export async function startGame(gameCode) {
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
-  const players = gameDoc.data().players.map((p) => ({
-    ...p,
-    inGame: true,
-    ready: false, // Reset ready status for next round
-  }));
+  const gameData = gameDoc.data();
+  const connectedPlayers = gameData.players.filter((p) => !p.disconnected);
+
+  // Validation: Check if there are players and if all connected players are ready
+  if (connectedPlayers.length === 0) {
+    throw new Error("Cannot start a game with no connected players.");
+  }
+  const allReady = connectedPlayers.every((p) => p.ready);
+  if (!allReady) {
+    throw new Error("Not all players are ready.");
+  }
+
+  // Update all players in the game, marking connected ones as inGame
+  const players = gameData.players.map((p) => {
+    // Only modify players who are actually connected and playing this round
+    if (!p.disconnected) {
+      return {
+        ...p,
+        inGame: true,
+        ready: false, // Reset ready status for the next round
+      };
+    }
+    return p; // Return disconnected players unchanged
+  });
 
   await gameRef.update({ state: "playing", players });
   return await getGameData(gameCode);
