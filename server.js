@@ -190,19 +190,25 @@ io.on("connection", (socket) => {
     try {
       const game = await Game.findGameByConnectionId(socket.id);
       if (game) {
-        const updatedPlayers = await Game.removePlayer(
+        const updatedPlayers = await Game.setPlayerDisconnected(
           game.gameCode,
           socket.id
         );
-        if (updatedPlayers.length > 0) {
+
+        if (updatedPlayers && updatedPlayers.length > 0) {
           io.to(game.gameCode).emit("message", {
             type: "playerList",
             players: updatedPlayers,
           });
+          console.log(
+            `Marked player with connection ${socket.id} as disconnected in game ${game.gameCode}`
+          );
+        } else if (updatedPlayers) {
+          // This case handles when an empty array is returned, meaning the game was deleted.
+          console.log(
+            `Game ${game.gameCode} deleted after final player disconnected.`
+          );
         }
-        console.log(
-          `Removed player with connection ${socket.id} from game ${game.gameCode}`
-        );
       }
     } catch (error) {
       console.error(`Error handling disconnect for ${socket.id}:`, error);

@@ -132,6 +132,7 @@ export async function createGame(playerId, connectionId) {
     ready: false,
     inGame: false,
     winCount: 0,
+    disconnected: false,
   };
 
   await gameRef.set({
@@ -186,23 +187,35 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
-  const players = gameDoc.data().players || [];
+  let players = gameDoc.data().players || [];
   const playerIndex = players.findIndex((p) => p.id === playerId);
 
+  // A host is needed if no currently connected player is the host.
+  const needsHost = !players.some((p) => p.isHost && !p.disconnected);
+
   if (playerIndex > -1) {
-    // --- THIS IS THE REJOIN LOGIC ---
-    // The player already exists. Update their connectionId and set inGame to false.
+    // --- REJOIN LOGIC ---
     console.log(
       `Player ${players[playerIndex].displayName} (${playerId}) is rejoining.`
     );
     players[playerIndex].connectionId = connectionId;
-    players[playerIndex].inGame = false; // Ensure they are not marked as in-game
+    players[playerIndex].disconnected = false;
+    players[playerIndex].inGame = false; // Reset in-game status
+
+    // If the game was hostless, this rejoining player becomes the new host.
+    if (needsHost) {
+      console.log(
+        `Game was hostless. Assigning host to ${players[playerIndex].displayName}.`
+      );
+      // Ensure no other player is marked as host.
+      players.forEach((p) => (p.isHost = false));
+      players[playerIndex].isHost = true;
+    }
 
     await gameRef.update({ players: players });
     return { player: players[playerIndex], isNew: false };
   } else {
-    // --- THIS IS THE NEW PLAYER LOGIC ---
-    // Player does not exist, create a new one.
+    // --- NEW PLAYER LOGIC ---
     console.log(`New player with ID ${playerId} is joining.`);
     const { displayName, playerEmoji } = getUniqueNameAndEmoji(players);
     const playerColor = getRandomColor();
@@ -213,11 +226,18 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       displayName,
       playerColor,
       playerEmoji,
-      isHost: false,
+      isHost: needsHost, // Become host if the game needs one.
       ready: false,
       inGame: false,
       winCount: 0,
+      disconnected: false,
     };
+
+    if (needsHost) {
+      console.log(
+        `Game was hostless. Assigning host to new player ${displayName}.`
+      );
+    }
 
     await gameRef.update({
       players: FieldValue.arrayUnion(newPlayer),
@@ -225,6 +245,55 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     return { player: newPlayer, isNew: true };
   }
 }
+
+export async function setPlayerDisconnected(gameCode, connectionId) {
+  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameDoc = await gameRef.get();
+  if (!gameDoc.exists) {
+    console.log(`Game ${gameCode} not found during disconnect handling.`);
+    return null;
+  }
+
+  let players = gameDoc.data().players;
+  const playerIndex = players.findIndex((p) => p.connectionId === connectionId);
+
+  if (playerIndex === -1) {
+    // Player not found, may have already been handled or reconnected with a new socket.
+    return players;
+  }
+
+  const playerToDisconnect = players[playerIndex];
+  console.log(`Disconnecting player: ${playerToDisconnect.displayName}`);
+
+  // Mark player as disconnected
+  players[playerIndex].disconnected = true;
+  players[playerIndex].connectionId = null;
+
+  // If the disconnecting player was the host, find a new one from connected players.
+  if (players[playerIndex].isHost) {
+    console.log(
+      `Host ${playerToDisconnect.displayName} disconnected. Finding new host.`
+    );
+    players[playerIndex].isHost = false;
+
+    // Find the first available CONNECTED player to promote to host.
+    const newHostIndex = players.findIndex((p) => !p.disconnected);
+
+    if (newHostIndex > -1) {
+      players[newHostIndex].isHost = true;
+      console.log(`New host is ${players[newHostIndex].displayName}.`);
+    } else {
+      console.log("No connected players left. Game is now hostless.");
+    }
+  }
+
+  // Persist the changes. We no longer delete the game document.
+  await gameRef.update({ players: players });
+
+  // Return the updated list of all players (including disconnected ones).
+  return players;
+}
+
 export async function removePlayer(gameCode, connectionId) {
   const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
   const gameDoc = await gameRef.get();
