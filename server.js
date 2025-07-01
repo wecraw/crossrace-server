@@ -155,7 +155,7 @@ io.on("connection", (socket) => {
   // WIN
   socket.on("win", async ({ gameCode, playerId, condensedGrid, time }) => {
     try {
-      const { updatedGame, winner } = await Game.endGame(
+      const { updatedGame, winner, activePlayers } = await Game.endGame(
         gameCode,
         playerId,
         condensedGrid,
@@ -170,7 +170,7 @@ io.on("connection", (socket) => {
         winnerColor: winner.playerColor,
         condensedGrid,
         time,
-        players: updatedGame.players,
+        players: activePlayers, // Only show players who were actively in the game
       };
 
       console.log(`Game ${gameCode} won by ${winner.displayName}`);

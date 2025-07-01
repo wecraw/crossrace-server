@@ -389,6 +389,9 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       throw new Error("Game has already ended.");
     }
 
+    // Capture players who were actively in the game before updating
+    const activePlayers = freshGameDoc.data().players.filter((p) => p.inGame);
+
     const players = freshGameDoc.data().players.map((p) => ({
       ...p,
       inGame: false,
@@ -397,8 +400,22 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
     }));
 
     transaction.update(gameRef, { state: "waiting", players });
-    return { ...freshGameDoc.data(), state: "waiting", players };
+    return {
+      ...freshGameDoc.data(),
+      state: "waiting",
+      players,
+      activePlayers: activePlayers.map((p) => ({
+        ...p,
+        inGame: false,
+        ready: false,
+        winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
+      })),
+    };
   });
 
-  return { updatedGame: updatedGameData, winner };
+  return {
+    updatedGame: updatedGameData,
+    winner,
+    activePlayers: updatedGameData.activePlayers,
+  };
 }
