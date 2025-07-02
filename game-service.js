@@ -356,6 +356,9 @@ export async function startGame(gameCode) {
     throw new Error("Not all players are ready.");
   }
 
+  // Store the IDs of players who are participating in this game
+  const currentGameParticipants = connectedPlayers.map((p) => p.id);
+
   // Update all players in the game, marking connected ones as inGame
   const players = gameData.players.map((p) => {
     // Only modify players who are actually connected and playing this round
@@ -369,7 +372,11 @@ export async function startGame(gameCode) {
     return p; // Return disconnected players unchanged
   });
 
-  await gameRef.update({ state: "playing", players });
+  await gameRef.update({
+    state: "playing",
+    players,
+    currentGameParticipants: currentGameParticipants,
+  });
   return await getGameData(gameCode);
 }
 
@@ -389,19 +396,30 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       throw new Error("Game has already ended.");
     }
 
-    // Capture players who were actively in the game before updating
-    const activePlayers = freshGameDoc.data().players.filter((p) => p.inGame);
+    const gameData = freshGameDoc.data();
+    const participantIds = gameData.currentGameParticipants || [];
 
-    const players = freshGameDoc.data().players.map((p) => ({
+    // Get the participants who were in the game (regardless of current connection status)
+    const activePlayers = gameData.players.filter((p) =>
+      participantIds.includes(p.id)
+    );
+
+    const players = gameData.players.map((p) => ({
       ...p,
       inGame: false,
       ready: false,
       winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
     }));
 
-    transaction.update(gameRef, { state: "waiting", players });
+    // Clear the current game participants list since the game is ending
+    transaction.update(gameRef, {
+      state: "waiting",
+      players,
+      currentGameParticipants: FieldValue.delete(),
+    });
+
     return {
-      ...freshGameDoc.data(),
+      ...gameData,
       state: "waiting",
       players,
       activePlayers: activePlayers.map((p) => ({
