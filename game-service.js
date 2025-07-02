@@ -376,6 +376,7 @@ export async function startGame(gameCode) {
     state: "playing",
     players,
     currentGameParticipants: currentGameParticipants,
+    lastGameEnd: FieldValue.delete(), // Clear any previous game end data
   });
   return await getGameData(gameCode);
 }
@@ -411,11 +412,29 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
     }));
 
-    // Clear the current game participants list since the game is ending
+    // Store the game end data for players who might reconnect after missing the message
+    const gameEndData = {
+      winner: winnerId,
+      winnerDisplayName: winner.displayName,
+      winnerEmoji: winner.playerEmoji,
+      winnerColor: winner.playerColor,
+      condensedGrid,
+      time,
+      endedAt: FieldValue.serverTimestamp(),
+      players: activePlayers.map((p) => ({
+        ...p,
+        inGame: false,
+        ready: false,
+        winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
+      })),
+    };
+
+    // Clear the current game participants list and store the game end data
     transaction.update(gameRef, {
       state: "waiting",
       players,
       currentGameParticipants: FieldValue.delete(),
+      lastGameEnd: gameEndData,
     });
 
     return {

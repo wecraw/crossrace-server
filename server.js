@@ -37,6 +37,9 @@ io.on("connection", (socket) => {
         displayName: player.displayName,
         playerColor: player.playerColor,
         playerEmoji: player.playerEmoji,
+        // New games never have ended, but include for consistency
+        gameEnded: false,
+        gameEndData: undefined,
       });
       // Send the initial player list to the creator
       io.to(gameCode).emit("playerList", { players: [player] });
@@ -81,6 +84,9 @@ io.on("connection", (socket) => {
         displayName: player.displayName,
         playerColor: player.playerColor,
         playerEmoji: player.playerEmoji,
+        // Include last game end data if available (for players who missed the gameEnded message)
+        gameEnded: !!updatedGame.lastGameEnd,
+        gameEndData: updatedGame.lastGameEnd || undefined,
       });
     } catch (error) {
       console.error(`Error on join for game ${gameCode}:`, error);
