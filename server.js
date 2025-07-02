@@ -75,6 +75,26 @@ io.on("connection", (socket) => {
         players: updatedGame.players,
       });
 
+      // Reconstruct full game end data if available
+      let gameEndData = undefined;
+      if (updatedGame.lastGameEnd) {
+        // Get the participants who were in the ended game
+        const endGameParticipants = updatedGame.players.filter((p) =>
+          updatedGame.lastGameEnd.participantIds.includes(p.id)
+        );
+
+        gameEndData = {
+          type: "gameEnded",
+          winner: updatedGame.lastGameEnd.winner,
+          winnerDisplayName: updatedGame.lastGameEnd.winnerDisplayName,
+          winnerEmoji: updatedGame.lastGameEnd.winnerEmoji,
+          winnerColor: updatedGame.lastGameEnd.winnerColor,
+          condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid), // Parse back from string
+          time: updatedGame.lastGameEnd.time,
+          players: endGameParticipants,
+        };
+      }
+
       // Send join confirmation and player details to the joining player
       callback({
         success: true,
@@ -86,7 +106,7 @@ io.on("connection", (socket) => {
         playerEmoji: player.playerEmoji,
         // Include last game end data if available (for players who missed the gameEnded message)
         gameEnded: !!updatedGame.lastGameEnd,
-        gameEndData: updatedGame.lastGameEnd || undefined,
+        gameEndData: gameEndData,
       });
     } catch (error) {
       console.error(`Error on join for game ${gameCode}:`, error);

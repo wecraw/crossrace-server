@@ -413,20 +413,17 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
     }));
 
     // Store the game end data for players who might reconnect after missing the message
+    // Keep it simple to avoid Firestore nested entity limitations
     const gameEndData = {
       winner: winnerId,
       winnerDisplayName: winner.displayName,
       winnerEmoji: winner.playerEmoji,
       winnerColor: winner.playerColor,
-      condensedGrid,
+      condensedGrid: JSON.stringify(condensedGrid), // Convert to string for Firestore
       time,
       endedAt: FieldValue.serverTimestamp(),
-      players: activePlayers.map((p) => ({
-        ...p,
-        inGame: false,
-        ready: false,
-        winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
-      })),
+      // Store only the participant IDs - we'll reconstruct the full player data when needed
+      participantIds: activePlayers.map((p) => p.id),
     };
 
     // Clear the current game participants list and store the game end data
