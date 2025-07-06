@@ -5,6 +5,7 @@ import { Server } from "socket.io";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
 import * as Game from "./game-service.js";
+import { Firestore, FieldValue } from "@google-cloud/firestore";
 
 dotenv.config(); // This loads the .env file
 
@@ -16,6 +17,23 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
   },
 });
+
+// Helper function to update game activity (TTL)
+async function updateGameActivity(gameCode) {
+  try {
+    const db = new Firestore();
+    const gameRef = db.collection("games").doc(gameCode);
+    const now = new Date();
+    const ttlTime = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes from now
+
+    await gameRef.update({
+      ttl: ttlTime,
+      lastActivity: FieldValue.serverTimestamp(),
+    });
+  } catch (error) {
+    console.error(`Error updating game activity for ${gameCode}:`, error);
+  }
+}
 
 io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
@@ -55,7 +73,7 @@ io.on("connection", (socket) => {
       let finalPlayerId = playerId || uuidv4();
       const gameData = await Game.getGameData(gameCode);
       if (!gameData) {
-        return callback({ success: false, message: "Game not found." });
+        return callback({ success: false, message: "Game not found" });
       }
 
       const { player } = await Game.addPlayerToGame(
@@ -118,6 +136,8 @@ io.on("connection", (socket) => {
   socket.on("getPlayers", async ({ gameCode }) => {
     const gameData = await Game.getGameData(gameCode);
     if (gameData) {
+      // Update activity when players request player list
+      await updateGameActivity(gameCode);
       socket.emit("message", { type: "playerList", players: gameData.players });
     }
   });

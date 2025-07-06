@@ -1,90 +1,14 @@
 // game-service.js
 import { Firestore, FieldValue } from "@google-cloud/firestore";
+import {
+  GAME_CONFIG,
+  ANIMAL_NICKNAMES,
+  DEFAULT_EMOJIS,
+  COLOR_PALETTE,
+  FIRESTORE_CONFIG,
+} from "./game-constants.js";
 
 const db = new Firestore();
-const GAMES_COLLECTION = "games";
-
-// --- Helper Functions ---
-const animalNicknames = [
-  "Lion",
-  "Tiger",
-  "Bear",
-  "Wolf",
-  "Fox",
-  "Elephant",
-  "Giraffe",
-  "Zebra",
-  "Monkey",
-  "Penguin",
-  "Kangaroo",
-  "Koala",
-  "Panda",
-  "Hippo",
-  "Rhino",
-  "Crocodile",
-  "Dolphin",
-  "Octopus",
-  "Eagle",
-  "Owl",
-  "Otter",
-  "Lizard",
-  "Snake",
-  "T-Rex",
-  "Tuna",
-  "Chicken",
-  "Cow",
-];
-const defaultEmojis = [
-  "🦁",
-  "🐯",
-  "🐻",
-  "🐺",
-  "🦊",
-  "🐘",
-  "🦒",
-  "🦓",
-  "🐵",
-  "🐧",
-  "🦘",
-  "🐨",
-  "🐼",
-  "🦛",
-  "🦏",
-  "🐊",
-  "🐬",
-  "🐙",
-  "🦅",
-  "🦉",
-  "🦦",
-  "🦎",
-  "🐍",
-  "🦖",
-  "🐟",
-  "🐔",
-  "🐮",
-];
-const colorPalette = [
-  "#e6194b",
-  "#3cb44b",
-  "#ffe119",
-  "#4363d8",
-  "#f58231",
-  "#911eb4",
-  "#46f0f0",
-  "#f032e6",
-  "#bcf60c",
-  "#fabebe",
-  "#008080",
-  "#e6beff",
-  "#9a6324",
-  "#fffac8",
-  "#800000",
-  "#aaffc3",
-  "#808000",
-  "#ffd8b1",
-  "#000075",
-  "#808080",
-];
 
 function generateGameCode() {
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -101,58 +25,128 @@ function getUniqueNameAndEmoji(existingPlayers = []) {
   const usedEmojis = new Set(existingPlayers.map((p) => p.playerEmoji));
 
   do {
-    const index = Math.floor(Math.random() * animalNicknames.length);
-    displayName = animalNicknames[index];
-    playerEmoji = defaultEmojis[index];
+    const index = Math.floor(Math.random() * ANIMAL_NICKNAMES.length);
+    displayName = ANIMAL_NICKNAMES[index];
+    playerEmoji = DEFAULT_EMOJIS[index];
   } while (usedNames.has(displayName) || usedEmojis.has(playerEmoji));
 
   return { displayName, playerEmoji };
 }
 
 function getRandomColor() {
-  return colorPalette[Math.floor(Math.random() * colorPalette.length)];
+  return COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)];
+}
+
+function getTTLTimestamp() {
+  // Set TTL to 10 minutes from now
+  const now = new Date();
+  const ttlTime = new Date(now.getTime() + GAME_CONFIG.TTL_MINUTES * 60 * 1000);
+  return ttlTime;
 }
 
 // --- Firestore Functions ---
 
 export async function createGame(playerId, connectionId) {
-  const gameCode = generateGameCode();
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gamesRef = db.collection(FIRESTORE_CONFIG.GAMES_COLLECTION);
+  const maxRetries = 10; // Prevent an infinite loop in case of high traffic
 
-  const { displayName, playerEmoji } = getUniqueNameAndEmoji();
-  const playerColor = getRandomColor();
+  for (let i = 0; i < maxRetries; i++) {
+    const gameCode = generateGameCode();
+    const gameRef = gamesRef.doc(gameCode);
 
-  const hostPlayer = {
-    id: playerId,
-    connectionId: connectionId,
-    displayName,
-    playerColor,
-    playerEmoji,
-    isHost: true,
-    ready: false,
-    inGame: false,
-    winCount: 0,
-    disconnected: false,
-  };
+    try {
+      const result = await db.runTransaction(async (transaction) => {
+        const gameDoc = await transaction.get(gameRef);
 
-  await gameRef.set({
-    gameCode,
-    players: [hostPlayer],
-    state: "waiting",
-    createdAt: FieldValue.serverTimestamp(),
-  });
+        // This host player object will be used for either creating or reusing a game
+        const { displayName, playerEmoji } = getUniqueNameAndEmoji();
+        const playerColor = getRandomColor();
+        const hostPlayer = {
+          id: playerId,
+          connectionId: connectionId,
+          displayName,
+          playerColor,
+          playerEmoji,
+          isHost: true,
+          ready: false,
+          inGame: false,
+          winCount: 0,
+          disconnected: false,
+        };
 
-  return { gameCode, player: hostPlayer };
+        if (!gameDoc.exists) {
+          // CASE 1: The room code is available. Create a new game document.
+          console.log(`Code ${gameCode} is available. Creating new game.`);
+          const newGameData = {
+            gameCode,
+            players: [hostPlayer],
+            state: "waiting",
+            createdAt: FieldValue.serverTimestamp(),
+            ttl: getTTLTimestamp(),
+            lastActivity: FieldValue.serverTimestamp(),
+          };
+          transaction.create(gameRef, newGameData);
+          return { gameCode, player: hostPlayer };
+        }
+
+        // CASE 2: The room code exists. Check if it's expired and can be reused.
+        const existingGame = gameDoc.data();
+        const ttl = existingGame.ttl?.toDate(); // Safely access and convert timestamp
+
+        if (ttl && ttl < new Date()) {
+          // CASE 2a: The game is expired (TTL is in the past). Reuse it.
+          console.log(`Code ${gameCode} exists but is expired. Reusing.`);
+          const reusedGameData = {
+            gameCode,
+            players: [hostPlayer], // Reset with the new host
+            state: "waiting",
+            createdAt: FieldValue.serverTimestamp(), // Update creation time
+            ttl: getTTLTimestamp(), // Set a new TTL for the new session
+            lastActivity: FieldValue.serverTimestamp(),
+            // Ensure old game-specific fields are cleared on reuse
+            lastGameEnd: FieldValue.delete(),
+            currentGameParticipants: FieldValue.delete(),
+          };
+          transaction.set(gameRef, reusedGameData); // Use set() to completely overwrite the old doc
+          return { gameCode, player: hostPlayer };
+        }
+
+        // CASE 2b: The game is active. We need to generate a new code and retry.
+        console.log(`Code ${gameCode} is actively in use. Retrying...`);
+        return null; // Returning null signals that this attempt failed and the loop should continue
+      });
+
+      if (result) {
+        // If the transaction succeeded and returned our data, we're done.
+        return result;
+      }
+      // If result is null, it means the code was active, and the loop will continue.
+    } catch (error) {
+      // This catches errors from the transaction itself (e.g., contention).
+      // The loop will automatically retry.
+      console.warn(
+        `Transaction for ${gameCode} failed, retrying. Error: ${error.message}`
+      );
+    }
+  }
+
+  // If we exit the loop, we failed to find a free game code after all retries.
+  throw new Error(
+    "Failed to create a game after multiple attempts. The server may be busy."
+  );
 }
 
 export async function getGameData(gameCode) {
-  const doc = await db.collection(GAMES_COLLECTION).doc(gameCode).get();
+  const doc = await db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode)
+    .get();
   return doc.exists ? doc.data() : null;
 }
 
 export async function findGameByPlayerId(playerId) {
   const snapshot = await db
-    .collection(GAMES_COLLECTION)
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .where("players", "array-contains", { id: playerId })
     .limit(1)
     .get();
@@ -162,14 +156,16 @@ export async function findGameByPlayerId(playerId) {
 
 export async function findGameByConnectionId(connectionId) {
   const snapshot = await db
-    .collection(GAMES_COLLECTION)
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .where("players", "array-contains-any", [{ connectionId: connectionId }]) // This is a simplification; requires more robust querying
     .get();
 
   // Firestore `array-contains-any` is tricky with objects. We'll have to filter client-side.
   // A better data model would be a subcollection of players. For now, this scan is okay for small scale.
   let gameDoc = null;
-  const querySnapshot = await db.collection(GAMES_COLLECTION).get();
+  const querySnapshot = await db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .get();
   querySnapshot.forEach((doc) => {
     const game = doc.data();
     if (
@@ -182,9 +178,22 @@ export async function findGameByConnectionId(connectionId) {
   return gameDoc;
 }
 
+// Helper function to update game activity
+async function updateGameActivity(gameCode) {
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
+  await gameRef.update({
+    ttl: getTTLTimestamp(),
+    lastActivity: FieldValue.serverTimestamp(),
+  });
+}
+
 // game-service.js
 export async function addPlayerToGame(gameCode, playerId, connectionId) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
@@ -214,7 +223,12 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       players[playerIndex].isHost = true;
     }
 
-    await gameRef.update({ players: players });
+    await gameRef.update({
+      players: players,
+      // Update TTL when player joins
+      ttl: getTTLTimestamp(),
+      lastActivity: FieldValue.serverTimestamp(),
+    });
     return { player: players[playerIndex], isNew: false };
   } else {
     // --- NEW PLAYER LOGIC ---
@@ -243,13 +257,18 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
 
     await gameRef.update({
       players: FieldValue.arrayUnion(newPlayer),
+      // Update TTL when player joins
+      ttl: getTTLTimestamp(),
+      lastActivity: FieldValue.serverTimestamp(),
     });
     return { player: newPlayer, isNew: true };
   }
 }
 
 export async function setPlayerDisconnected(gameCode, connectionId) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
 
   let updatedPlayers = null; // Will hold the final list if the transaction succeeds
 
@@ -299,8 +318,15 @@ export async function setPlayerDisconnected(gameCode, connectionId) {
       }
     }
 
+    // Update TTL when there's activity (even disconnection)
+    const updateData = {
+      players,
+      ttl: getTTLTimestamp(),
+      lastActivity: FieldValue.serverTimestamp(),
+    };
+
     // Persist the changes atomically
-    transaction.update(gameRef, { players });
+    transaction.update(gameRef, updateData);
     updatedPlayers = players; // Save for return value outside the transaction
   });
 
@@ -308,7 +334,9 @@ export async function setPlayerDisconnected(gameCode, connectionId) {
 }
 
 export async function removePlayer(gameCode, connectionId) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) return null;
 
@@ -335,7 +363,9 @@ export async function removePlayer(gameCode, connectionId) {
 }
 
 export async function updatePlayer(gameCode, playerId, updates) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
@@ -346,12 +376,19 @@ export async function updatePlayer(gameCode, playerId, updates) {
   // Merge updates into the player object
   players[playerIndex] = { ...players[playerIndex], ...updates };
 
-  await gameRef.update({ players: players });
+  await gameRef.update({
+    players: players,
+    // Update TTL when player updates
+    ttl: getTTLTimestamp(),
+    lastActivity: FieldValue.serverTimestamp(),
+  });
   return await getGameData(gameCode);
 }
 
 export async function startGame(gameCode) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
@@ -388,12 +425,17 @@ export async function startGame(gameCode) {
     players,
     currentGameParticipants: currentGameParticipants,
     lastGameEnd: FieldValue.delete(), // Clear any previous game end data
+    // Update TTL when game starts
+    ttl: getTTLTimestamp(),
+    lastActivity: FieldValue.serverTimestamp(),
   });
   return await getGameData(gameCode);
 }
 
 export async function endGame(gameCode, winnerId, condensedGrid, time) {
-  const gameRef = db.collection(GAMES_COLLECTION).doc(gameCode);
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
   const gameDoc = await gameRef.get();
   if (!gameDoc.exists) throw new Error("Game not found");
 
@@ -443,6 +485,9 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       players,
       currentGameParticipants: FieldValue.delete(),
       lastGameEnd: gameEndData,
+      // Update TTL when game ends
+      ttl: getTTLTimestamp(),
+      lastActivity: FieldValue.serverTimestamp(),
     });
 
     return {
