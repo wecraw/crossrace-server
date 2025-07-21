@@ -6,6 +6,7 @@ import {
   DEFAULT_EMOJIS,
   COLOR_PALETTE,
   FIRESTORE_CONFIG,
+  COUNTDOWN_CONFIG,
 } from "./game-constants.js";
 
 const db = new Firestore();
@@ -106,6 +107,7 @@ export async function createGame(playerId, connectionId) {
             // Ensure old game-specific fields are cleared on reuse
             lastGameEnd: FieldValue.delete(),
             currentGameParticipants: FieldValue.delete(),
+            gameStartTime: FieldValue.delete(),
           };
           transaction.set(gameRef, reusedGameData); // Use set() to completely overwrite the old doc
           return { gameCode, player: hostPlayer };
@@ -407,6 +409,9 @@ export async function startGame(gameCode) {
   // Store the IDs of players who are participating in this game
   const currentGameParticipants = connectedPlayers.map((p) => p.id);
 
+  // Record the server timestamp when the game starts
+  const gameStartTime = FieldValue.serverTimestamp();
+
   // Update all players in the game, marking connected ones as inGame
   const players = gameData.players.map((p) => {
     // Only modify players who are actually connected and playing this round
@@ -424,6 +429,7 @@ export async function startGame(gameCode) {
     state: "playing",
     players,
     currentGameParticipants: currentGameParticipants,
+    gameStartTime: gameStartTime, // Add the game start timestamp
     lastGameEnd: FieldValue.delete(), // Clear any previous game end data
     // Update TTL when game starts
     ttl: getTTLTimestamp(),
@@ -432,7 +438,33 @@ export async function startGame(gameCode) {
   return await getGameData(gameCode);
 }
 
-export async function endGame(gameCode, winnerId, condensedGrid, time) {
+// Function to calculate current game time in seconds for timer synchronization
+export function calculateCurrentGameTime(gameStartTime) {
+  if (!gameStartTime) {
+    return 0; // Game hasn't started yet
+  }
+
+  // Convert Firestore timestamp to Date if needed
+  const startTime = gameStartTime.toDate
+    ? gameStartTime.toDate()
+    : new Date(gameStartTime);
+  const now = new Date();
+
+  // Calculate elapsed time in milliseconds since game start
+  const elapsedMs = now.getTime() - startTime.getTime();
+
+  // Subtract the countdown delay to match what the client timer shows
+  // The client timer starts counting after the countdown, so we offset by that amount
+  const adjustedElapsedMs = Math.max(
+    0,
+    elapsedMs - COUNTDOWN_CONFIG.START_DELAY
+  );
+
+  // Convert to seconds (rounded down)
+  return Math.floor(adjustedElapsedMs / 1000);
+}
+
+export async function endGame(gameCode, winnerId, condensedGrid) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
@@ -441,6 +473,17 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
 
   const winner = gameDoc.data().players.find((p) => p.id === winnerId);
   if (!winner) throw new Error("Winner not found");
+
+  // Calculate the server time based on game start time
+  const gameData = gameDoc.data();
+  const serverTimeSeconds = calculateCurrentGameTime(gameData.gameStartTime);
+
+  // Format time as "M:SS" like the client was doing
+  const minutes = Math.floor(serverTimeSeconds / 60);
+  const remainingSeconds = serverTimeSeconds % 60;
+  const formattedTime = `${minutes}:${remainingSeconds
+    .toString()
+    .padStart(2, "0")}`;
 
   // This update must be atomic. We use a transaction.
   const updatedGameData = await db.runTransaction(async (transaction) => {
@@ -473,7 +516,7 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       winnerEmoji: winner.playerEmoji,
       winnerColor: winner.playerColor,
       condensedGrid: JSON.stringify(condensedGrid), // Convert to string for Firestore
-      time,
+      time: formattedTime, // Use server-calculated time
       endedAt: FieldValue.serverTimestamp(),
       // Store only the participant IDs - we'll reconstruct the full player data when needed
       participantIds: activePlayers.map((p) => p.id),
@@ -484,6 +527,7 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
       state: "waiting",
       players,
       currentGameParticipants: FieldValue.delete(),
+      gameStartTime: FieldValue.delete(), // Clear the game start time
       lastGameEnd: gameEndData,
       // Update TTL when game ends
       ttl: getTTLTimestamp(),
@@ -507,5 +551,6 @@ export async function endGame(gameCode, winnerId, condensedGrid, time) {
     updatedGame: updatedGameData,
     winner,
     activePlayers: updatedGameData.activePlayers,
+    winTime: formattedTime, // Return the server-calculated time
   };
 }

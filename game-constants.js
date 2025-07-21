@@ -90,3 +90,9 @@ export const COLOR_PALETTE = [
 export const FIRESTORE_CONFIG = {
   GAMES_COLLECTION: "games",
 };
+
+// Should be the same as the animation delay on the client
+// see game-constants.ts from client
+export const COUNTDOWN_CONFIG = {
+  START_DELAY: 7100,
+};

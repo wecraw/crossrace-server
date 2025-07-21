@@ -93,6 +93,14 @@ io.on("connection", (socket) => {
         players: updatedGame.players,
       });
 
+      // Calculate current game time if the game is in progress
+      let currentGameTime = 0;
+      if (updatedGame.state === "playing" && updatedGame.gameStartTime) {
+        currentGameTime = Game.calculateCurrentGameTime(
+          updatedGame.gameStartTime
+        );
+      }
+
       // Reconstruct full game end data if available
       let gameEndData = undefined;
       if (updatedGame.lastGameEnd) {
@@ -125,6 +133,10 @@ io.on("connection", (socket) => {
         // Include last game end data if available (for players who missed the gameEnded message)
         gameEnded: !!updatedGame.lastGameEnd,
         gameEndData: gameEndData,
+        // Include current game time and state for timer synchronization
+        gameState: updatedGame.state,
+        currentGameTime: currentGameTime,
+        isGameActive: updatedGame.state === "playing",
       });
     } catch (error) {
       console.error(`Error on join for game ${gameCode}:`, error);
@@ -138,7 +150,57 @@ io.on("connection", (socket) => {
     if (gameData) {
       // Update activity when players request player list
       await updateGameActivity(gameCode);
-      socket.emit("message", { type: "playerList", players: gameData.players });
+
+      // Calculate current game time if the game is in progress
+      let currentGameTime = 0;
+      if (gameData.state === "playing" && gameData.gameStartTime) {
+        currentGameTime = Game.calculateCurrentGameTime(gameData.gameStartTime);
+      }
+
+      socket.emit("message", {
+        type: "playerList",
+        players: gameData.players,
+        // Include game time information for timer sync
+        gameState: gameData.state,
+        currentGameTime: currentGameTime,
+        isGameActive: gameData.state === "playing",
+      });
+    }
+  });
+
+  // REQUEST GAME STATE: A player requests full game state (e.g., after reconnection)
+  socket.on("requestGameState", async ({ gameCode }) => {
+    try {
+      const gameData = await Game.getGameData(gameCode);
+      if (!gameData) {
+        socket.emit("message", {
+          type: "error",
+          message: "Game not found",
+        });
+        return;
+      }
+
+      // Calculate current game time if the game is in progress
+      let currentGameTime = 0;
+      if (gameData.state === "playing" && gameData.gameStartTime) {
+        currentGameTime = Game.calculateCurrentGameTime(gameData.gameStartTime);
+      }
+
+      socket.emit("message", {
+        type: "gameState",
+        gameState: {
+          state: gameData.state,
+          players: gameData.players,
+          currentGameTime: currentGameTime,
+          isGameActive: gameData.state === "playing",
+        },
+      });
+    } catch (error) {
+      console.error(`Error handling requestGameState for ${gameCode}:`, error);
+      socket.emit("message", {
+        type: "error",
+        message: "Failed to get game state",
+      });
     }
   });
 
@@ -199,14 +261,10 @@ io.on("connection", (socket) => {
   });
 
   // WIN
-  socket.on("win", async ({ gameCode, playerId, condensedGrid, time }) => {
+  socket.on("win", async ({ gameCode, playerId, condensedGrid }) => {
     try {
-      const { updatedGame, winner, activePlayers } = await Game.endGame(
-        gameCode,
-        playerId,
-        condensedGrid,
-        time
-      );
+      const { updatedGame, winner, activePlayers, winTime } =
+        await Game.endGame(gameCode, playerId, condensedGrid);
 
       const gameEndedMessage = {
         type: "gameEnded",
@@ -215,11 +273,13 @@ io.on("connection", (socket) => {
         winnerEmoji: winner.playerEmoji,
         winnerColor: winner.playerColor,
         condensedGrid,
-        time,
+        time: winTime, // Use server-calculated time
         players: activePlayers, // Only show players who were actively in the game
       };
 
-      console.log(`Game ${gameCode} won by ${winner.displayName}`);
+      console.log(
+        `Game ${gameCode} won by ${winner.displayName} in ${winTime}`
+      );
       io.to(gameCode).emit("message", gameEndedMessage);
     } catch (error) {
       if (error.message.includes("already ended")) {
