@@ -94,16 +94,16 @@ io.on("connection", (socket) => {
       });
 
       // Calculate current game time if the game is in progress
+      let currentGameTime = 0;
       if (updatedGame.state === "playing" && updatedGame.gameStartTime) {
-        let currentGameTime = 0;
         currentGameTime = Game.calculateCurrentGameTime(
           updatedGame.gameStartTime
         );
       }
 
       // Reconstruct full game end data if available
+      let gameEndData = undefined;
       if (updatedGame.lastGameEnd) {
-        let gameEndData = undefined;
         // Get the participants who were in the ended game
         const endGameParticipants = updatedGame.players.filter((p) =>
           updatedGame.lastGameEnd.participantIds.includes(p.id)
