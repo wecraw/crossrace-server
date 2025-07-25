@@ -67,7 +67,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // JOIN: A player joins an existing game
+  // JOIN: A player joins an existing game or lobby
   socket.on("join", async ({ gameCode, playerId }, callback) => {
     try {
       let finalPlayerId = playerId || uuidv4();
@@ -94,16 +94,16 @@ io.on("connection", (socket) => {
       });
 
       // Calculate current game time if the game is in progress
-      let currentGameTime = 0;
       if (updatedGame.state === "playing" && updatedGame.gameStartTime) {
+        let currentGameTime = 0;
         currentGameTime = Game.calculateCurrentGameTime(
           updatedGame.gameStartTime
         );
       }
 
       // Reconstruct full game end data if available
-      let gameEndData = undefined;
       if (updatedGame.lastGameEnd) {
+        let gameEndData = undefined;
         // Get the participants who were in the ended game
         const endGameParticipants = updatedGame.players.filter((p) =>
           updatedGame.lastGameEnd.participantIds.includes(p.id)
@@ -124,7 +124,6 @@ io.on("connection", (socket) => {
       // Send join confirmation and player details to the joining player
       callback({
         success: true,
-        type: "selfJoined", // This tells the joining client their own details
         playerId: finalPlayerId,
         gameCode,
         displayName: player.displayName,
