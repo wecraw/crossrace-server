@@ -191,7 +191,6 @@ async function updateGameActivity(gameCode) {
   });
 }
 
-// game-service.js
 export async function addPlayerToGame(gameCode, playerId, connectionId) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)

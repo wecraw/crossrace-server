@@ -70,6 +70,42 @@ io.on("connection", (socket) => {
   // JOIN: A player joins an existing game or lobby
   socket.on("join", async ({ gameCode, playerId }, callback) => {
     try {
+      // --- START: DUPLICATE CONNECTION HANDLING ---
+      const gameDataForCheck = await Game.getGameData(gameCode);
+      if (gameDataForCheck && playerId) {
+        const existingPlayer = gameDataForCheck.players.find(
+          (p) => p.id === playerId
+        );
+
+        // Check if the player exists, has a connectionId, and it's NOT the current socket's ID
+        if (
+          existingPlayer &&
+          existingPlayer.connectionId &&
+          existingPlayer.connectionId !== socket.id
+        ) {
+          console.log(
+            `Duplicate connection for player ${existingPlayer.displayName} (${playerId}). Old socket: ${existingPlayer.connectionId}, New socket: ${socket.id}.`
+          );
+
+          // Find the old socket instance
+          const oldSocket = io.sockets.sockets.get(existingPlayer.connectionId);
+
+          if (oldSocket) {
+            // 1. Notify the old client why it's being disconnected
+            oldSocket.emit("forceDisconnect", {
+              message:
+                "You have connected from a new tab or browser. This session has been closed.",
+            });
+            // 2. Disconnect the old socket from the server
+            oldSocket.disconnect(true);
+            console.log(
+              `Forcefully disconnected old socket: ${existingPlayer.connectionId}`
+            );
+          }
+        }
+      }
+      // --- END: DUPLICATE CONNECTION HANDLING ---
+
       let finalPlayerId = playerId || uuidv4();
       const gameData = await Game.getGameData(gameCode);
       if (!gameData) {
