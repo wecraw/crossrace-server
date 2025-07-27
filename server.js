@@ -279,8 +279,8 @@ io.on("connection", (socket) => {
   // START GAME
   socket.on("startGame", async ({ gameCode }) => {
     try {
-      // The game-service now handles validation (all connected players are ready)
-      await Game.startGame(gameCode);
+      // The game-service handles validation (all connected players are ready)
+      await Game.startGame(gameCode, socket.id);
       const gameSeed = Math.floor(Math.random() * 3650);
 
       console.log(`Game ${gameCode} starting! with seed ${gameSeed}`);

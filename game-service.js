@@ -386,55 +386,68 @@ export async function updatePlayer(gameCode, playerId, updates) {
   return await getGameData(gameCode);
 }
 
-export async function startGame(gameCode) {
+export async function startGame(gameCode, requestingConnectionId) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
-  const gameDoc = await gameRef.get();
-  if (!gameDoc.exists) throw new Error("Game not found");
 
-  const gameData = gameDoc.data();
-  const connectedPlayers = gameData.players.filter((p) => !p.disconnected);
+  // Use a transaction to atomically read the game state and update it.
+  // This prevents race conditions, e.g., if the host disconnects while the
+  // startGame request is in flight.
+  await db.runTransaction(async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists) throw new Error("Game not found");
 
-  // Validation: Check if there are players and if all connected players are ready
-  if (connectedPlayers.length === 0) {
-    throw new Error("Cannot start a game with no connected players.");
-  }
-  const allReady = connectedPlayers.every((p) => p.ready);
-  if (!allReady) {
-    throw new Error("Not all players are ready.");
-  }
+    const gameData = gameDoc.data();
 
-  // Store the IDs of players who are participating in this game
-  const currentGameParticipants = connectedPlayers.map((p) => p.id);
+    // Find the player making the request via their current connection ID.
+    const requestor = gameData.players.find(
+      (p) => p.connectionId === requestingConnectionId
+    );
 
-  // Record the server timestamp when the game starts
-  const gameStartTime = FieldValue.serverTimestamp();
-
-  // Update all players in the game, marking connected ones as inGame
-  const players = gameData.players.map((p) => {
-    // Only modify players who are actually connected and playing this round
-    if (!p.disconnected) {
-      return {
-        ...p,
-        inGame: true,
-        ready: false, // Reset ready status for the next round
-      };
+    // --- Validation ---
+    if (!requestor) {
+      throw new Error("Requesting player not found or is disconnected.");
     }
-    return p; // Return disconnected players unchanged
-  });
+    if (!requestor.isHost) {
+      throw new Error("Only the host can start the game.");
+    }
 
-  await gameRef.update({
-    state: "playing",
-    players,
-    currentGameParticipants: currentGameParticipants,
-    gameStartTime: gameStartTime, // Add the game start timestamp
-    lastGameEnd: FieldValue.delete(), // Clear any previous game end data
-    // Update TTL when game starts
-    ttl: getTTLTimestamp(),
-    lastActivity: FieldValue.serverTimestamp(),
+    const connectedPlayers = gameData.players.filter((p) => !p.disconnected);
+
+    if (connectedPlayers.length === 0) {
+      throw new Error("Cannot start a game with no connected players.");
+    }
+    const allReady = connectedPlayers.every((p) => p.ready);
+    if (!allReady) {
+      throw new Error("Not all players are ready.");
+    }
+
+    // --- Update Game State ---
+    const currentGameParticipants = connectedPlayers.map((p) => p.id);
+    const gameStartTime = FieldValue.serverTimestamp();
+
+    const players = gameData.players.map((p) => {
+      if (!p.disconnected) {
+        return {
+          ...p,
+          inGame: true,
+          ready: false,
+        };
+      }
+      return p;
+    });
+
+    transaction.update(gameRef, {
+      state: "playing",
+      players,
+      currentGameParticipants: currentGameParticipants,
+      gameStartTime: gameStartTime,
+      lastGameEnd: FieldValue.delete(),
+      ttl: getTTLTimestamp(),
+      lastActivity: FieldValue.serverTimestamp(),
+    });
   });
-  return await getGameData(gameCode);
 }
 
 // Function to calculate current game time in seconds for timer synchronization
