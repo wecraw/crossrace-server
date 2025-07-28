@@ -203,7 +203,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // REQUEST GAME STATE: A player requests full game state (e.g., after reconnection)
+  // REQUEST GAME STATE: A player requests full game state (e.g., after reconnection) this is only used in lobby tho
   socket.on("requestGameState", async ({ gameCode }) => {
     try {
       const gameData = await Game.getGameData(gameCode);
@@ -215,19 +215,13 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // Calculate current game time if the game is in progress
-      let currentGameTime = 0;
-      if (gameData.state === "playing" && gameData.gameStartTime) {
-        currentGameTime = Game.calculateCurrentGameTime(gameData.gameStartTime);
-      }
-
       socket.emit("message", {
         type: "gameState",
         gameState: {
           state: gameData.state,
           players: gameData.players,
-          currentGameTime: currentGameTime,
           isGameActive: gameData.state === "playing",
+          gameEnded: !!gameData.lastGameEnd,
         },
       });
     } catch (error) {
