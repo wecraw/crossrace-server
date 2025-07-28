@@ -290,7 +290,7 @@ io.on("connection", (socket) => {
   });
 
   // WIN
-  socket.on("win", async ({ gameCode, playerId, condensedGrid }) => {
+  socket.on("win", async ({ gameCode, playerId, condensedGrid }, callback) => {
     try {
       const { updatedGame, winner, activePlayers, winTime } =
         await Game.endGame(gameCode, playerId, condensedGrid);
@@ -310,13 +310,26 @@ io.on("connection", (socket) => {
         `Game ${gameCode} won by ${winner.displayName} in ${winTime}`
       );
       io.to(gameCode).emit("message", gameEndedMessage);
+
+      // Acknowledge successful processing (if callback provided)
+      if (callback) {
+        callback({ success: true });
+      }
     } catch (error) {
       if (error.message.includes("already ended")) {
         console.log(
           `Late win submission for game ${gameCode} by player ${playerId}. Ignoring.`
         );
+        // Still acknowledge since this is expected behavior (if callback provided)
+        if (callback) {
+          callback({ success: true });
+        }
       } else {
         console.error(`Error processing win for game ${gameCode}:`, error);
+        // Acknowledge with error details (if callback provided)
+        if (callback) {
+          callback({ success: false, message: error.message });
+        }
       }
     }
   });
