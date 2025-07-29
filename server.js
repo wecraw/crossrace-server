@@ -319,6 +319,33 @@ io.on("connection", (socket) => {
     }
   });
 
+  // POST GAME CELL CLICK
+  socket.on("postGameCellClick", async ({ gameCode, row, col }) => {
+    try {
+      // Find the player who sent the click to get their color
+      const gameData = await Game.getGameData(gameCode);
+      if (!gameData) return; // Game not found, do nothing.
+
+      const clickingPlayer = gameData.players.find(
+        (p) => p.connectionId === socket.id
+      );
+      if (!clickingPlayer) return; // Player not found, do nothing.
+
+      // Broadcast the click to other players in the room
+      socket.broadcast.to(gameCode).emit("message", {
+        type: "postGameCellClicked",
+        row,
+        col,
+        color: clickingPlayer.playerColor,
+      });
+    } catch (error) {
+      console.error(
+        `Error handling postGameCellClick for game ${gameCode}:`,
+        error
+      );
+    }
+  });
+
   // DISCONNECT
   socket.on("disconnect", async () => {
     console.log(`Client disconnected: ${socket.id}`);
