@@ -123,8 +123,9 @@ io.on("connection", (socket) => {
       );
 
       const updatedGame = await Game.getGameData(gameCode);
-      // Broadcast the new player list to everyone in the room
-      io.to(gameCode).emit("message", {
+      // Broadcast the new player list to everyone *else* in the room.
+      // The rejoining client gets its state from the callback.
+      socket.broadcast.to(gameCode).emit("message", {
         type: "playerList",
         players: updatedGame.players,
       });
