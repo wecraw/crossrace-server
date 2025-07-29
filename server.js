@@ -1,4 +1,4 @@
-// server.js
+// crossrace-server/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -255,25 +255,10 @@ io.on("connection", (socket) => {
     }
   );
 
-  // PLAYER READY
-  socket.on("playerReady", async ({ gameCode, playerId }) => {
-    try {
-      const updatedGame = await Game.updatePlayer(gameCode, playerId, {
-        ready: true,
-      });
-      io.to(gameCode).emit("message", {
-        type: "playerList",
-        players: updatedGame.players,
-      });
-    } catch (error) {
-      console.error(`Error on playerReady for ${playerId}:`, error);
-    }
-  });
-
   // START GAME
   socket.on("startGame", async ({ gameCode }) => {
     try {
-      // The game-service handles validation (all connected players are ready)
+      // The game-service handles validation (e.g. is host, players exist)
       await Game.startGame(gameCode, socket.id);
       const gameSeed = Math.floor(Math.random() * 3650);
 

@@ -1,4 +1,4 @@
-// game-service.js
+// crossrace-server/game-service.js
 import { Firestore, FieldValue } from "@google-cloud/firestore";
 import {
   GAME_CONFIG,
@@ -69,7 +69,6 @@ export async function createGame(playerId, connectionId) {
           playerColor,
           playerEmoji,
           isHost: true,
-          ready: false,
           inGame: false,
           winCount: 0,
           disconnected: false,
@@ -212,7 +211,6 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     players[playerIndex].connectionId = connectionId;
     players[playerIndex].disconnected = false; // Player is now reconnected
     players[playerIndex].inGame = false; // Ensure they are not marked as in-game
-    players[playerIndex].ready = false; // A rejoining player is never ready by default
 
     // If the game was hostless, this rejoining player becomes the new host.
     if (needsHost) {
@@ -244,7 +242,6 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       playerColor,
       playerEmoji,
       isHost: needsHost, // Become host if the game needs one.
-      ready: false,
       inGame: false,
       winCount: 0,
       disconnected: false,
@@ -418,10 +415,6 @@ export async function startGame(gameCode, requestingConnectionId) {
     if (connectedPlayers.length === 0) {
       throw new Error("Cannot start a game with no connected players.");
     }
-    const allReady = connectedPlayers.every((p) => p.ready);
-    if (!allReady) {
-      throw new Error("Not all players are ready.");
-    }
 
     // --- Update Game State ---
     const currentGameParticipants = connectedPlayers.map((p) => p.id);
@@ -432,7 +425,6 @@ export async function startGame(gameCode, requestingConnectionId) {
         return {
           ...p,
           inGame: true,
-          ready: false,
         };
       }
       return p;
@@ -516,7 +508,6 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
     const players = gameData.players.map((p) => ({
       ...p,
       inGame: false,
-      ready: false,
       winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
     }));
 
@@ -553,7 +544,6 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
       activePlayers: activePlayers.map((p) => ({
         ...p,
         inGame: false,
-        ready: false,
         winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
       })),
     };
