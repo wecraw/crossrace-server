@@ -140,11 +140,6 @@ io.on("connection", (socket) => {
       // Reconstruct full game end data if available
       let gameEndData = undefined;
       if (updatedGame.lastGameEnd) {
-        // Get the participants who were in the ended game
-        const endGameParticipants = updatedGame.players.filter((p) =>
-          updatedGame.lastGameEnd.participantIds.includes(p.id)
-        );
-
         gameEndData = {
           type: "gameEnded",
           winner: updatedGame.lastGameEnd.winner,
@@ -153,7 +148,7 @@ io.on("connection", (socket) => {
           winnerColor: updatedGame.lastGameEnd.winnerColor,
           condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid), // Parse back from string
           time: updatedGame.lastGameEnd.time,
-          players: endGameParticipants,
+          players: updatedGame.players, // Simplified: Always send the full current player list
         };
       }
 
@@ -203,36 +198,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // REQUEST GAME STATE: A player requests full game state (e.g., after reconnection) this is only used in lobby tho
-  socket.on("requestGameState", async ({ gameCode }) => {
-    try {
-      const gameData = await Game.getGameData(gameCode);
-      if (!gameData) {
-        socket.emit("message", {
-          type: "error",
-          message: "Game not found",
-        });
-        return;
-      }
-
-      socket.emit("message", {
-        type: "gameState",
-        gameState: {
-          state: gameData.state,
-          players: gameData.players,
-          isGameActive: gameData.state === "playing",
-          gameEnded: !!gameData.lastGameEnd,
-        },
-      });
-    } catch (error) {
-      console.error(`Error handling requestGameState for ${gameCode}:`, error);
-      socket.emit("message", {
-        type: "error",
-        message: "Failed to get game state",
-      });
-    }
-  });
-
   // PLAYER UPDATES: displayName, color, emoji
   socket.on(
     "updatePlayer",
@@ -277,8 +242,12 @@ io.on("connection", (socket) => {
   // WIN
   socket.on("win", async ({ gameCode, playerId, condensedGrid }, callback) => {
     try {
-      const { updatedGame, winner, activePlayers, winTime } =
-        await Game.endGame(gameCode, playerId, condensedGrid);
+      // `endGame` no longer returns `activePlayers`
+      const { updatedGame, winner, winTime } = await Game.endGame(
+        gameCode,
+        playerId,
+        condensedGrid
+      );
 
       const gameEndedMessage = {
         type: "gameEnded",
@@ -288,7 +257,7 @@ io.on("connection", (socket) => {
         winnerColor: winner.playerColor,
         condensedGrid,
         time: winTime, // Use server-calculated time
-        players: activePlayers, // Only show players who were actively in the game
+        players: updatedGame.players, // Simplified: Send the full, updated player list
       };
 
       console.log(

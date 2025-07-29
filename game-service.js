@@ -497,22 +497,16 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
       throw new Error("Game has already ended.");
     }
 
-    const gameData = freshGameDoc.data();
-    const participantIds = gameData.currentGameParticipants || [];
+    const currentData = freshGameDoc.data();
 
-    // Get the participants who were in the game (regardless of current connection status)
-    const activePlayers = gameData.players.filter((p) =>
-      participantIds.includes(p.id)
-    );
-
-    const players = gameData.players.map((p) => ({
+    // Update win counts and inGame status for all players in the lobby
+    const updatedPlayers = currentData.players.map((p) => ({
       ...p,
       inGame: false,
       winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
     }));
 
-    // Store the game end data for players who might reconnect after missing the message
-    // Keep it simple to avoid Firestore nested entity limitations
+    // Simplified game end data for storage (no participant list needed)
     const gameEndData = {
       winner: winnerId,
       winnerDisplayName: winner.displayName,
@@ -521,14 +515,12 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
       condensedGrid: JSON.stringify(condensedGrid), // Convert to string for Firestore
       time: formattedTime, // Use server-calculated time
       endedAt: FieldValue.serverTimestamp(),
-      // Store only the participant IDs - we'll reconstruct the full player data when needed
-      participantIds: activePlayers.map((p) => p.id),
     };
 
     // Clear the current game participants list and store the game end data
     transaction.update(gameRef, {
       state: "waiting",
-      players,
+      players: updatedPlayers,
       currentGameParticipants: FieldValue.delete(),
       gameStartTime: FieldValue.delete(), // Clear the game start time
       lastGameEnd: gameEndData,
@@ -537,22 +529,17 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
       lastActivity: FieldValue.serverTimestamp(),
     });
 
+    // Return the full updated game state with the new player list
     return {
-      ...gameData,
+      ...currentData,
       state: "waiting",
-      players,
-      activePlayers: activePlayers.map((p) => ({
-        ...p,
-        inGame: false,
-        winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
-      })),
+      players: updatedPlayers,
     };
   });
 
   return {
     updatedGame: updatedGameData,
     winner,
-    activePlayers: updatedGameData.activePlayers,
     winTime: formattedTime, // Return the server-calculated time
   };
 }
