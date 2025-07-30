@@ -55,6 +55,7 @@ io.on("connection", (socket) => {
         displayName: player.displayName,
         playerColor: player.playerColor,
         playerEmoji: player.playerEmoji,
+        players: [player], // Initial player list with just the creator
         // New games never have ended, but include for consistency
         gameEnded: false,
         gameEndData: undefined,
@@ -161,6 +162,8 @@ io.on("connection", (socket) => {
         displayName: player.displayName,
         playerColor: player.playerColor,
         playerEmoji: player.playerEmoji,
+        gameSeed: updatedGame.gameSeed,
+        players: updatedGame.players,
         // Include last game end data if available (for players who missed the gameEnded message)
         gameEnded: !!updatedGame.lastGameEnd,
         gameEndData: gameEndData,
