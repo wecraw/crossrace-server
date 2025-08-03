@@ -418,7 +418,7 @@ export async function updatePlayer(gameCode, playerId, updates) {
   return await getGameData(gameCode);
 }
 
-export async function startGame(gameCode, requestingConnectionId) {
+export async function startGame(gameCode, requestingConnectionId, gameSeed) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
@@ -467,6 +467,7 @@ export async function startGame(gameCode, requestingConnectionId) {
 
     transaction.update(gameRef, {
       state: "playing",
+      gameSeed: gameSeed,
       players,
       currentGameParticipants: currentGameParticipants,
       gameStartTime: gameStartTime,

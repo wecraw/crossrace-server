@@ -45,8 +45,8 @@ async function startGameLogic(gameCode) {
       throw new Error("Cannot start game without a host.");
     }
 
-    await Game.startGame(gameCode, host.connectionId);
     const gameSeed = Math.floor(Math.random() * 3650);
+    await Game.startGame(gameCode, host.connectionId, gameSeed);
 
     console.log(
       `Game ${gameCode} starting automatically! with seed ${gameSeed}`
@@ -271,9 +271,9 @@ io.on("connection", (socket) => {
   // START GAME (from lobby)
   socket.on("startGame", async ({ gameCode }) => {
     try {
-      // The game-service handles validation (e.g. is host, players exist)
-      await Game.startGame(gameCode, socket.id);
       const gameSeed = Math.floor(Math.random() * 3650);
+      // The game-service handles validation (e.g. is host, players exist)
+      await Game.startGame(gameCode, socket.id, gameSeed);
 
       console.log(`Game ${gameCode} starting! with seed ${gameSeed}`);
       io.to(gameCode).emit("message", { type: "gameStarted", gameSeed });
