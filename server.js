@@ -60,8 +60,6 @@ io.on("connection", (socket) => {
         gameEnded: false,
         gameEndData: undefined,
       });
-      // Send the initial player list to the creator
-      io.to(gameCode).emit("playerList", { players: [player] });
     } catch (error) {
       console.error("Error creating game:", error);
       callback({ success: false, message: error.message });
