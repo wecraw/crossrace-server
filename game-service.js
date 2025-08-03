@@ -71,6 +71,7 @@ export async function createGame(playerId, connectionId) {
           inGame: false,
           winCount: 0,
           disconnected: false,
+          ready: false,
         };
 
         if (!gameDoc.exists) {
@@ -104,6 +105,7 @@ export async function createGame(playerId, connectionId) {
             lastActivity: FieldValue.serverTimestamp(),
             // Ensure old game-specific fields are cleared on reuse
             lastGameEnd: FieldValue.delete(),
+            lastGameEndTimestamp: FieldValue.delete(),
             currentGameParticipants: FieldValue.delete(),
             gameStartTime: FieldValue.delete(),
           };
@@ -210,6 +212,7 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     players[playerIndex].connectionId = connectionId;
     players[playerIndex].disconnected = false; // Player is now reconnected
     players[playerIndex].inGame = false; // Ensure they are not marked as in-game
+    players[playerIndex].ready = false; // Reset ready status on rejoin
 
     // If the game was hostless, this rejoining player becomes the new host.
     if (needsHost) {
@@ -244,6 +247,7 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       inGame: false,
       winCount: 0,
       disconnected: false,
+      ready: false,
     };
 
     if (needsHost) {
@@ -260,6 +264,38 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     });
     return { player: newPlayer, isNew: true };
   }
+}
+
+export async function setPlayerReady(gameCode, playerId) {
+  const gameRef = db
+    .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
+    .doc(gameCode);
+
+  let allReady = false;
+  let updatedGameData = null;
+
+  await db.runTransaction(async (transaction) => {
+    const gameDoc = await transaction.get(gameRef);
+    if (!gameDoc.exists) throw new Error("Game not found");
+
+    const gameData = gameDoc.data();
+    let players = gameData.players;
+    const playerIndex = players.findIndex((p) => p.id === playerId);
+    if (playerIndex === -1) throw new Error("Player not found");
+
+    // Set player to ready
+    players[playerIndex].ready = true;
+
+    transaction.update(gameRef, { players });
+
+    const connectedPlayers = players.filter((p) => !p.disconnected);
+    allReady =
+      connectedPlayers.length > 0 && connectedPlayers.every((p) => p.ready);
+
+    updatedGameData = { ...gameData, players };
+  });
+
+  return { updatedGameData, allReady };
 }
 
 export async function setPlayerDisconnected(gameCode, connectionId) {
@@ -435,6 +471,7 @@ export async function startGame(gameCode, requestingConnectionId) {
       currentGameParticipants: currentGameParticipants,
       gameStartTime: gameStartTime,
       lastGameEnd: FieldValue.delete(),
+      lastGameEndTimestamp: FieldValue.delete(),
       ttl: getTTLTimestamp(),
       lastActivity: FieldValue.serverTimestamp(),
     });
@@ -502,6 +539,7 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
     const updatedPlayers = currentData.players.map((p) => ({
       ...p,
       inGame: false,
+      ready: false,
       winCount: p.id === winnerId ? (p.winCount || 0) + 1 : p.winCount || 0,
     }));
 
@@ -523,6 +561,7 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
       currentGameParticipants: FieldValue.delete(),
       gameStartTime: FieldValue.delete(), // Clear the game start time
       lastGameEnd: gameEndData,
+      lastGameEndTimestamp: FieldValue.serverTimestamp(),
       // Update TTL when game ends
       ttl: getTTLTimestamp(),
       lastActivity: FieldValue.serverTimestamp(),

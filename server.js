@@ -17,6 +17,50 @@ const io = new Server(server, {
   },
 });
 
+const gameTimeouts = new Map();
+
+// Helper to start game and clear timeout
+async function startGameLogic(gameCode) {
+  // Clear any pending timeout for this game
+  if (gameTimeouts.has(gameCode)) {
+    clearTimeout(gameTimeouts.get(gameCode));
+    gameTimeouts.delete(gameCode);
+  }
+
+  try {
+    // Re-fetch game data to ensure we have the latest player list and state
+    const gameData = await Game.getGameData(gameCode);
+    if (!gameData) {
+      console.log(`Game ${gameCode} not found. Aborting auto-start.`);
+      return;
+    }
+    if (gameData.state !== "waiting") {
+      console.log(
+        `Game ${gameCode} is not in a 'waiting' state. Aborting auto-start.`
+      );
+      return;
+    }
+    const host = gameData.players.find((p) => p.isHost && !p.disconnected);
+    if (!host) {
+      throw new Error("Cannot start game without a host.");
+    }
+
+    await Game.startGame(gameCode, host.connectionId);
+    const gameSeed = Math.floor(Math.random() * 3650);
+
+    console.log(
+      `Game ${gameCode} starting automatically! with seed ${gameSeed}`
+    );
+    io.to(gameCode).emit("message", { type: "gameStarted", gameSeed });
+  } catch (error) {
+    console.error(`Error auto-starting game ${gameCode}:`, error.message);
+    io.to(gameCode).emit("message", {
+      type: "error",
+      message: `Failed to start next game: ${error.message}`,
+    });
+  }
+}
+
 // Helper function to update game activity (TTL)
 async function updateGameActivity(gameCode) {
   try {
@@ -166,6 +210,7 @@ io.on("connection", (socket) => {
         // Include last game end data if available (for players who missed the gameEnded message)
         gameEnded: !!updatedGame.lastGameEnd,
         gameEndData: gameEndData,
+        lastGameEndTimestamp: updatedGame.lastGameEndTimestamp?.toDate(),
         // Include current game time and state for timer synchronization
         gameState: updatedGame.state,
         currentGameTime: currentGameTime,
@@ -223,7 +268,7 @@ io.on("connection", (socket) => {
     }
   );
 
-  // START GAME
+  // START GAME (from lobby)
   socket.on("startGame", async ({ gameCode }) => {
     try {
       // The game-service handles validation (e.g. is host, players exist)
@@ -252,6 +297,9 @@ io.on("connection", (socket) => {
         condensedGrid
       );
 
+      // Re-fetch to get the server-set timestamp
+      const latestGameData = await Game.getGameData(gameCode);
+
       const gameEndedMessage = {
         type: "gameEnded",
         winner: winner.id,
@@ -261,12 +309,22 @@ io.on("connection", (socket) => {
         condensedGrid,
         time: winTime, // Use server-calculated time
         players: updatedGame.players, // Simplified: Send the full, updated player list
+        lastGameEndTimestamp: latestGameData.lastGameEndTimestamp.toDate(),
       };
 
       console.log(
         `Game ${gameCode} won by ${winner.displayName} in ${winTime}`
       );
       io.to(gameCode).emit("message", gameEndedMessage);
+
+      // Set a 30-second timeout to start the next game
+      const timeoutId = setTimeout(() => {
+        console.log(
+          `30-second timer expired for ${gameCode}. Starting next game.`
+        );
+        startGameLogic(gameCode);
+      }, 30000);
+      gameTimeouts.set(gameCode, timeoutId);
 
       // Acknowledge successful processing (if callback provided)
       if (callback) {
@@ -288,6 +346,31 @@ io.on("connection", (socket) => {
           callback({ success: false, message: error.message });
         }
       }
+    }
+  });
+
+  // PLAYER READY (new event)
+  socket.on("playerReady", async ({ gameCode, playerId }, callback) => {
+    try {
+      const { updatedGameData, allReady } = await Game.setPlayerReady(
+        gameCode,
+        playerId
+      );
+
+      // Broadcast the updated player list so everyone's UI updates
+      io.to(gameCode).emit("message", {
+        type: "playerList",
+        players: updatedGameData.players,
+      });
+
+      if (allReady) {
+        console.log(`All players ready in ${gameCode}. Starting next game.`);
+        await startGameLogic(gameCode);
+      }
+      callback({ success: true });
+    } catch (error) {
+      console.error(`Error on playerReady for game ${gameCode}:`, error);
+      callback({ success: false, message: error.message });
     }
   });
 
