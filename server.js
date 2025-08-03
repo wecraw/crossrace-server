@@ -1,4 +1,3 @@
-// crossrace-server/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -41,21 +40,23 @@ io.on("connection", (socket) => {
   // CREATE: A player creates a new game
   socket.on("create", async (callback) => {
     try {
-      const playerId = uuidv4();
-      const { gameCode, player } = await Game.createGame(playerId, socket.id);
-      socket.join(gameCode); // The creator joins the socket.io room for the game
-      console.log(
-        `Player ${player.displayName} (${playerId}) created game ${gameCode}`
+      const newPlayerId = uuidv4();
+      const { gameCode, playerId, players } = await Game.createGame(
+        newPlayerId,
+        socket.id
       );
+      socket.join(gameCode);
+      const hostPlayer = players[0]; // The first player is always the host on creation
+      console.log(
+        `Player ${hostPlayer.displayName} (${playerId}) created game ${gameCode}`
+      );
+
       // Send game info back to the creator
       callback({
         success: true,
         gameCode,
-        playerId,
-        displayName: player.displayName,
-        playerColor: player.playerColor,
-        playerEmoji: player.playerEmoji,
-        players: [player], // Initial player list with just the creator
+        playerId, // Use the ID returned from the service
+        players, // Use the player list returned from the service
         // New games never have ended, but include for consistency
         gameEnded: false,
         gameEndData: undefined,

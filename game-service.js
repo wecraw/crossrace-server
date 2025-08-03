@@ -1,4 +1,3 @@
-// crossrace-server/game-service.js
 import { Firestore, FieldValue } from "@google-cloud/firestore";
 import {
   GAME_CONFIG,
@@ -86,7 +85,7 @@ export async function createGame(playerId, connectionId) {
             lastActivity: FieldValue.serverTimestamp(),
           };
           transaction.create(gameRef, newGameData);
-          return { gameCode, player: hostPlayer };
+          return { gameCode, playerId: hostPlayer.id, players: [hostPlayer] };
         }
 
         // CASE 2: The room code exists. Check if it's expired and can be reused.
@@ -109,7 +108,7 @@ export async function createGame(playerId, connectionId) {
             gameStartTime: FieldValue.delete(),
           };
           transaction.set(gameRef, reusedGameData); // Use set() to completely overwrite the old doc
-          return { gameCode, player: hostPlayer };
+          return { gameCode, playerId: hostPlayer.id, players: [hostPlayer] };
         }
 
         // CASE 2b: The game is active. We need to generate a new code and retry.
