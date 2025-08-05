@@ -6,7 +6,6 @@ import {
   DEFAULT_EMOJIS,
   COLOR_PALETTE,
   FIRESTORE_CONFIG,
-  COUNTDOWN_CONFIG,
 } from "./game-constants.js";
 
 const db = new Firestore();
