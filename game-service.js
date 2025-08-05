@@ -1,3 +1,4 @@
+// crossrace-server/game-service.js
 import { Firestore, FieldValue } from "@google-cloud/firestore";
 import {
   GAME_CONFIG,
@@ -493,16 +494,10 @@ export function calculateCurrentGameTime(gameStartTime) {
 
   // Calculate elapsed time in milliseconds since game start
   const elapsedMs = now.getTime() - startTime.getTime();
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
 
-  // Subtract the countdown delay to match what the client timer shows
-  // The client timer starts counting after the countdown, so we offset by that amount
-  const adjustedElapsedMs = Math.max(
-    0,
-    elapsedMs - COUNTDOWN_CONFIG.START_DELAY
-  );
-
-  // Convert to seconds (rounded down)
-  return Math.floor(adjustedElapsedMs / 1000);
+  // Return the raw elapsed time. The client will handle any animation offset.
+  return Math.max(0, elapsedSeconds);
 }
 
 export async function endGame(gameCode, winnerId, condensedGrid) {
