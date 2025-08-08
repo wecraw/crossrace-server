@@ -1,3 +1,4 @@
+// crossrace-server/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -40,23 +41,17 @@ async function startGameLogic(gameCode) {
       );
       return;
     }
-    const host = gameData.players.find((p) => p.isHost && !p.disconnected);
-    if (!host) {
-      throw new Error("Cannot start game without a host.");
-    }
 
     const gameSeed = Math.floor(Math.random() * 3650);
-    await Game.startGame(gameCode, host.connectionId, gameSeed);
+    await Game.startGame(gameCode, gameSeed);
 
-    console.log(
-      `Game ${gameCode} starting automatically! with seed ${gameSeed}`
-    );
+    console.log(`Game ${gameCode} starting! with seed ${gameSeed}`);
     io.to(gameCode).emit("message", { type: "gameStarted", gameSeed });
   } catch (error) {
     console.error(`Error auto-starting game ${gameCode}:`, error.message);
     io.to(gameCode).emit("message", {
       type: "error",
-      message: `Failed to start next game: ${error.message}`,
+      message: `Failed to start game: ${error.message}`,
     });
   }
 }
@@ -90,9 +85,9 @@ io.on("connection", (socket) => {
         socket.id
       );
       socket.join(gameCode);
-      const hostPlayer = players[0]; // The first player is always the host on creation
+      const newPlayer = players[0];
       console.log(
-        `Player ${hostPlayer.displayName} (${playerId}) created game ${gameCode}`
+        `Player ${newPlayer.displayName} (${playerId}) created game ${gameCode}`
       );
 
       // Send game info back to the creator
@@ -267,25 +262,6 @@ io.on("connection", (socket) => {
       }
     }
   );
-
-  // START GAME (from lobby)
-  socket.on("startGame", async ({ gameCode }) => {
-    try {
-      const gameSeed = Math.floor(Math.random() * 3650);
-      // The game-service handles validation (e.g. is host, players exist)
-      await Game.startGame(gameCode, socket.id, gameSeed);
-
-      console.log(`Game ${gameCode} starting! with seed ${gameSeed}`);
-      io.to(gameCode).emit("message", { type: "gameStarted", gameSeed });
-    } catch (error) {
-      console.error(`Error starting game ${gameCode}:`, error.message);
-      // Let the client know why starting the game failed.
-      socket.emit("message", {
-        type: "error",
-        message: `Failed to start game: ${error.message}`,
-      });
-    }
-  });
 
   // WIN
   socket.on("win", async ({ gameCode, playerId, condensedGrid }, callback) => {

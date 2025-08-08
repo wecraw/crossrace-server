@@ -1,4 +1,3 @@
-// crossrace-server/game-service.js
 import { Firestore, FieldValue } from "@google-cloud/firestore";
 import {
   GAME_CONFIG,
@@ -61,13 +60,12 @@ export async function createGame(playerId, connectionId) {
         // This host player object will be used for either creating or reusing a game
         const { displayName, playerEmoji } = getUniqueNameAndEmoji();
         const playerColor = getRandomColor();
-        const hostPlayer = {
+        const newPlayer = {
           id: playerId,
           connectionId: connectionId,
           displayName,
           playerColor,
           playerEmoji,
-          isHost: true,
           inGame: false,
           winCount: 0,
           disconnected: false,
@@ -79,14 +77,14 @@ export async function createGame(playerId, connectionId) {
           console.log(`Code ${gameCode} is available. Creating new game.`);
           const newGameData = {
             gameCode,
-            players: [hostPlayer],
+            players: [newPlayer],
             state: "waiting",
             createdAt: FieldValue.serverTimestamp(),
             ttl: getTTLTimestamp(),
             lastActivity: FieldValue.serverTimestamp(),
           };
           transaction.create(gameRef, newGameData);
-          return { gameCode, playerId: hostPlayer.id, players: [hostPlayer] };
+          return { gameCode, playerId: newPlayer.id, players: [newPlayer] };
         }
 
         // CASE 2: The room code exists. Check if it's expired and can be reused.
@@ -98,7 +96,7 @@ export async function createGame(playerId, connectionId) {
           console.log(`Code ${gameCode} exists but is expired. Reusing.`);
           const reusedGameData = {
             gameCode,
-            players: [hostPlayer], // Reset with the new host
+            players: [newPlayer], // Reset with the new player
             state: "waiting",
             createdAt: FieldValue.serverTimestamp(), // Update creation time
             ttl: getTTLTimestamp(), // Set a new TTL for the new session
@@ -110,7 +108,7 @@ export async function createGame(playerId, connectionId) {
             gameStartTime: FieldValue.delete(),
           };
           transaction.set(gameRef, reusedGameData); // Use set() to completely overwrite the old doc
-          return { gameCode, playerId: hostPlayer.id, players: [hostPlayer] };
+          return { gameCode, playerId: newPlayer.id, players: [newPlayer] };
         }
 
         // CASE 2b: The game is active. We need to generate a new code and retry.
@@ -201,9 +199,6 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
   let players = gameDoc.data().players || [];
   const playerIndex = players.findIndex((p) => p.id === playerId);
 
-  // A host is needed if no currently connected player is the host.
-  const needsHost = !players.some((p) => p.isHost && !p.disconnected);
-
   if (playerIndex > -1) {
     // --- REJOIN LOGIC ---
     console.log(
@@ -213,16 +208,6 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     players[playerIndex].disconnected = false; // Player is now reconnected
     players[playerIndex].inGame = false; // Ensure they are not marked as in-game
     players[playerIndex].ready = false; // Reset ready status on rejoin
-
-    // If the game was hostless, this rejoining player becomes the new host.
-    if (needsHost) {
-      console.log(
-        `Game was hostless. Assigning host to ${players[playerIndex].displayName}.`
-      );
-      // Ensure no other player is marked as host.
-      players.forEach((p) => (p.isHost = false));
-      players[playerIndex].isHost = true;
-    }
 
     await gameRef.update({
       players: players,
@@ -243,18 +228,11 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
       displayName,
       playerColor,
       playerEmoji,
-      isHost: needsHost, // Become host if the game needs one.
       inGame: false,
       winCount: 0,
       disconnected: false,
       ready: false,
     };
-
-    if (needsHost) {
-      console.log(
-        `Game was hostless. Assigning host to new player ${displayName}.`
-      );
-    }
 
     await gameRef.update({
       players: FieldValue.arrayUnion(newPlayer),
@@ -289,8 +267,9 @@ export async function setPlayerReady(gameCode, playerId) {
     transaction.update(gameRef, { players });
 
     const connectedPlayers = players.filter((p) => !p.disconnected);
+    // Game can start if at least 2 players are connected and all of them are ready.
     allReady =
-      connectedPlayers.length > 0 && connectedPlayers.every((p) => p.ready);
+      connectedPlayers.length >= 2 && connectedPlayers.every((p) => p.ready);
 
     updatedGameData = { ...gameData, players };
   });
@@ -338,19 +317,6 @@ export async function setPlayerDisconnected(gameCode, connectionId) {
       connectionId: null,
     };
 
-    // If the disconnecting player was the host, transfer host to the first
-    // still-connected player (if any)
-    if (playerToDisconnect.isHost) {
-      players[playerIndex].isHost = false;
-      const newHostIndex = players.findIndex((p) => !p.disconnected);
-      if (newHostIndex > -1) {
-        players[newHostIndex].isHost = true;
-        console.log(`New host is ${players[newHostIndex].displayName}.`);
-      } else {
-        console.log("No connected players left. Game is now hostless.");
-      }
-    }
-
     // Update TTL when there's activity (even disconnection)
     const updateData = {
       players,
@@ -379,11 +345,6 @@ export async function removePlayer(gameCode, connectionId) {
   if (!playerToRemove) return players; // Player already removed
 
   let updatedPlayers = players.filter((p) => p.connectionId !== connectionId);
-
-  // If the host disconnected, assign a new host
-  if (playerToRemove.isHost && updatedPlayers.length > 0) {
-    updatedPlayers[0].isHost = true;
-  }
 
   if (updatedPlayers.length === 0) {
     // Optional: Delete the game if everyone leaves
@@ -418,37 +379,23 @@ export async function updatePlayer(gameCode, playerId, updates) {
   return await getGameData(gameCode);
 }
 
-export async function startGame(gameCode, requestingConnectionId, gameSeed) {
+export async function startGame(gameCode, gameSeed) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
 
   // Use a transaction to atomically read the game state and update it.
-  // This prevents race conditions, e.g., if the host disconnects while the
-  // startGame request is in flight.
   await db.runTransaction(async (transaction) => {
     const gameDoc = await transaction.get(gameRef);
     if (!gameDoc.exists) throw new Error("Game not found");
 
     const gameData = gameDoc.data();
 
-    // Find the player making the request via their current connection ID.
-    const requestor = gameData.players.find(
-      (p) => p.connectionId === requestingConnectionId
-    );
-
     // --- Validation ---
-    if (!requestor) {
-      throw new Error("Requesting player not found or is disconnected.");
-    }
-    if (!requestor.isHost) {
-      throw new Error("Only the host can start the game.");
-    }
-
     const connectedPlayers = gameData.players.filter((p) => !p.disconnected);
 
-    if (connectedPlayers.length === 0) {
-      throw new Error("Cannot start a game with no connected players.");
+    if (connectedPlayers.length < 2) {
+      throw new Error("A multiplayer game requires at least 2 players.");
     }
 
     // --- Update Game State ---
