@@ -1,4 +1,3 @@
-// crossrace-server/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -168,6 +167,20 @@ io.on("connection", (socket) => {
         type: "playerList",
         players: updatedGame.players,
       });
+
+      // Check if game should start now that a player has joined/reconnected
+      const connectedPlayers = updatedGame.players.filter(
+        (p) => !p.disconnected
+      );
+      const allReady =
+        connectedPlayers.length >= 2 && connectedPlayers.every((p) => p.ready);
+
+      if (allReady) {
+        console.log(
+          `A player joined/reconnected and all players are now ready in ${gameCode}. Starting game.`
+        );
+        await startGameLogic(gameCode);
+      }
 
       // Calculate current game time if the game is in progress
       let currentGameTime = 0;
