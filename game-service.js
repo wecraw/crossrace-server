@@ -211,13 +211,22 @@ export async function addPlayerToGame(
 
   if (playerIndex > -1) {
     // --- REJOIN LOGIC ---
+    const existingPlayer = players[playerIndex];
     console.log(
-      `Player ${players[playerIndex].displayName} (${playerId}) is rejoining.`
+      `Player ${existingPlayer.displayName} (${playerId}) is rejoining.`
     );
-    players[playerIndex].connectionId = connectionId;
-    players[playerIndex].disconnected = false; // Player is now reconnected
-    players[playerIndex].inGame = false; // Ensure they are not marked as in-game
-    players[playerIndex].ready = false; // Reset ready status on rejoin
+    existingPlayer.connectionId = connectionId;
+    existingPlayer.disconnected = false; // Player is now reconnected
+    existingPlayer.inGame = false; // Ensure they are not marked as in-game
+    existingPlayer.ready = false; // Reset ready status on rejoin
+
+    // If a new name is provided on rejoin, update it.
+    if (displayName && existingPlayer.displayName !== displayName) {
+      console.log(
+        `Updating name for rejoining player ${playerId} from "${existingPlayer.displayName}" to "${displayName}".`
+      );
+      existingPlayer.displayName = displayName;
+    }
 
     await gameRef.update({
       players: players,
@@ -225,7 +234,7 @@ export async function addPlayerToGame(
       ttl: getTTLTimestamp(),
       lastActivity: FieldValue.serverTimestamp(),
     });
-    return { player: players[playerIndex], isNew: false };
+    return { player: existingPlayer, isNew: false };
   } else {
     // --- NEW PLAYER LOGIC ---
     if (!displayName) {
@@ -370,11 +379,6 @@ export async function removePlayer(gameCode, connectionId) {
 }
 
 export async function updatePlayer(gameCode, playerId, updates) {
-  // Prevent players from changing their display name after joining.
-  if ("displayName" in updates) {
-    delete updates.displayName;
-  }
-
   // Do not proceed if there are no more updates to apply
   if (Object.keys(updates).length === 0) {
     return await getGameData(gameCode);
