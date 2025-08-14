@@ -76,12 +76,19 @@ io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   // CREATE: A player creates a new game
-  socket.on("create", async (callback) => {
+  socket.on("create", async ({ playerName }, callback) => {
     try {
+      if (!playerName) {
+        return callback({
+          success: false,
+          message: "Player name is required.",
+        });
+      }
       const newPlayerId = uuidv4();
       const { gameCode, playerId, players } = await Game.createGame(
         newPlayerId,
-        socket.id
+        socket.id,
+        playerName
       );
       socket.join(gameCode);
       const newPlayer = players[0];
@@ -106,7 +113,7 @@ io.on("connection", (socket) => {
   });
 
   // JOIN: A player joins an existing game or lobby
-  socket.on("join", async ({ gameCode, playerId }, callback) => {
+  socket.on("join", async ({ gameCode, playerId, playerName }, callback) => {
     try {
       // --- START: DUPLICATE CONNECTION HANDLING ---
       const gameDataForCheck = await Game.getGameData(gameCode);
@@ -153,7 +160,8 @@ io.on("connection", (socket) => {
       const { player } = await Game.addPlayerToGame(
         gameCode,
         finalPlayerId,
-        socket.id
+        socket.id,
+        playerName
       );
       socket.join(gameCode);
       console.log(

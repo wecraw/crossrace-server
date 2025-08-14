@@ -18,18 +18,23 @@ function generateGameCode() {
   return result;
 }
 
-function getUniqueNameAndEmoji(existingPlayers = []) {
-  let displayName, playerEmoji;
-  const usedNames = new Set(existingPlayers.map((p) => p.displayName));
-  const usedEmojis = new Set(existingPlayers.map((p) => p.playerEmoji));
+function getUniqueEmoji(existingPlayers = []) {
+  let playerEmoji;
+  const usedEmojis = new Set(
+    existingPlayers.map((p) => p.playerEmoji).filter(Boolean)
+  );
+
+  // Handle case where all emojis are used to prevent infinite loops
+  if (usedEmojis.size >= DEFAULT_EMOJIS.length) {
+    return DEFAULT_EMOJIS[Math.floor(Math.random() * DEFAULT_EMOJIS.length)];
+  }
 
   do {
-    const index = Math.floor(Math.random() * ANIMAL_NICKNAMES.length);
-    displayName = ANIMAL_NICKNAMES[index];
+    const index = Math.floor(Math.random() * DEFAULT_EMOJIS.length);
     playerEmoji = DEFAULT_EMOJIS[index];
-  } while (usedNames.has(displayName) || usedEmojis.has(playerEmoji));
+  } while (usedEmojis.has(playerEmoji));
 
-  return { displayName, playerEmoji };
+  return playerEmoji;
 }
 
 function getRandomColor() {
@@ -45,7 +50,7 @@ function getTTLTimestamp() {
 
 // --- Firestore Functions ---
 
-export async function createGame(playerId, connectionId) {
+export async function createGame(playerId, connectionId, displayName) {
   const gamesRef = db.collection(FIRESTORE_CONFIG.GAMES_COLLECTION);
   const maxRetries = 10; // Prevent an infinite loop in case of high traffic
 
@@ -58,7 +63,7 @@ export async function createGame(playerId, connectionId) {
         const gameDoc = await transaction.get(gameRef);
 
         // This host player object will be used for either creating or reusing a game
-        const { displayName, playerEmoji } = getUniqueNameAndEmoji();
+        const playerEmoji = getUniqueEmoji();
         const playerColor = getRandomColor();
         const newPlayer = {
           id: playerId,
@@ -189,7 +194,12 @@ async function updateGameActivity(gameCode) {
   });
 }
 
-export async function addPlayerToGame(gameCode, playerId, connectionId) {
+export async function addPlayerToGame(
+  gameCode,
+  playerId,
+  connectionId,
+  displayName
+) {
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
@@ -218,8 +228,11 @@ export async function addPlayerToGame(gameCode, playerId, connectionId) {
     return { player: players[playerIndex], isNew: false };
   } else {
     // --- NEW PLAYER LOGIC ---
-    console.log(`New player with ID ${playerId} is joining.`);
-    const { displayName, playerEmoji } = getUniqueNameAndEmoji(players);
+    if (!displayName) {
+      throw new Error("A display name is required for a new player.");
+    }
+    console.log(`New player "${displayName}" with ID ${playerId} is joining.`);
+    const playerEmoji = getUniqueEmoji(players);
     const playerColor = getRandomColor();
 
     const newPlayer = {
@@ -357,6 +370,16 @@ export async function removePlayer(gameCode, connectionId) {
 }
 
 export async function updatePlayer(gameCode, playerId, updates) {
+  // Prevent players from changing their display name after joining.
+  if ("displayName" in updates) {
+    delete updates.displayName;
+  }
+
+  // Do not proceed if there are no more updates to apply
+  if (Object.keys(updates).length === 0) {
+    return await getGameData(gameCode);
+  }
+
   const gameRef = db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .doc(gameCode);
