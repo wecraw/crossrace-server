@@ -204,9 +204,6 @@ io.on("connection", (socket) => {
         gameEndData = {
           type: "gameEnded",
           winner: updatedGame.lastGameEnd.winner,
-          winnerDisplayName: updatedGame.lastGameEnd.winnerDisplayName,
-          winnerEmoji: updatedGame.lastGameEnd.winnerEmoji,
-          winnerColor: updatedGame.lastGameEnd.winnerColor,
           condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid), // Parse back from string
           time: updatedGame.lastGameEnd.time,
           players: updatedGame.players, // Simplified: Always send the full current player list
@@ -217,10 +214,8 @@ io.on("connection", (socket) => {
       callback({
         success: true,
         playerId: finalPlayerId,
+        player: player,
         gameCode,
-        displayName: player.displayName,
-        playerColor: player.playerColor,
-        playerEmoji: player.playerEmoji,
         gameSeed: updatedGame.gameSeed,
         players: updatedGame.players,
         // Include last game end data if available (for players who missed the gameEnded message)
@@ -262,7 +257,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // PLAYER UPDATES: displayName, color, emoji
+  // PLAYER UPDATES: displayName, color, avatar
   socket.on(
     "updatePlayer",
     async ({ gameCode, playerId, updates }, callback) => {
@@ -287,7 +282,6 @@ io.on("connection", (socket) => {
   // WIN
   socket.on("win", async ({ gameCode, playerId, condensedGrid }, callback) => {
     try {
-      // `endGame` no longer returns `activePlayers`
       const { updatedGame, winner, winTime } = await Game.endGame(
         gameCode,
         playerId,
@@ -299,13 +293,11 @@ io.on("connection", (socket) => {
 
       const gameEndedMessage = {
         type: "gameEnded",
-        winner: winner.id,
-        winnerDisplayName: winner.displayName,
-        winnerEmoji: winner.playerEmoji,
-        winnerColor: winner.playerColor,
+        winnerId: winner.id,
+        winner: winner,
         condensedGrid,
-        time: winTime, // Use server-calculated time
-        players: updatedGame.players, // Simplified: Send the full, updated player list
+        time: winTime,
+        players: updatedGame.players,
         lastGameEndTimestamp: latestGameData.lastGameEndTimestamp.toDate(),
       };
 
@@ -314,7 +306,7 @@ io.on("connection", (socket) => {
       );
       io.to(gameCode).emit("message", gameEndedMessage);
 
-      // Set a 30-second timeout to start the next game
+      // 30-second timeout to start the next game
       const timeoutId = setTimeout(() => {
         console.log(
           `30-second timer expired for ${gameCode}. Starting next game.`
@@ -388,7 +380,7 @@ io.on("connection", (socket) => {
         type: "postGameCellClicked",
         row,
         col,
-        color: clickingPlayer.playerColor,
+        colorId: clickingPlayer.colorId,
       });
     } catch (error) {
       console.error(
