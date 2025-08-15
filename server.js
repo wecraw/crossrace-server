@@ -1,3 +1,4 @@
+// crossrace-server/server.js
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -100,11 +101,8 @@ io.on("connection", (socket) => {
       callback({
         success: true,
         gameCode,
-        playerId, // Use the ID returned from the service
-        players, // Use the player list returned from the service
-        // New games never have ended, but include for consistency
-        gameEnded: false,
-        gameEndData: undefined,
+        playerId,
+        players,
       });
     } catch (error) {
       console.error("Error creating game:", error);
@@ -157,7 +155,7 @@ io.on("connection", (socket) => {
         return callback({ success: false, message: "Game not found" });
       }
 
-      const { player } = await Game.addPlayerToGame(
+      await Game.addPlayerToGame(
         gameCode,
         finalPlayerId,
         socket.id,
@@ -165,7 +163,7 @@ io.on("connection", (socket) => {
       );
       socket.join(gameCode);
       console.log(
-        `Player ${player.displayName} (${finalPlayerId}) joined game ${gameCode}`
+        `Player ${playerName} (${finalPlayerId}) joined game ${gameCode}`
       );
 
       const updatedGame = await Game.getGameData(gameCode);
@@ -214,7 +212,6 @@ io.on("connection", (socket) => {
       callback({
         success: true,
         playerId: finalPlayerId,
-        player: player,
         gameCode,
         gameSeed: updatedGame.gameSeed,
         players: updatedGame.players,
