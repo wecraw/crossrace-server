@@ -4,36 +4,6 @@ export const GAME_CONFIG = {
   GAME_CODE_LENGTH: 4,
 };
 
-export const ANIMAL_NICKNAMES = [
-  "Lion",
-  "Tiger",
-  "Bear",
-  "Wolf",
-  "Fox",
-  "Elephant",
-  "Giraffe",
-  "Zebra",
-  "Monkey",
-  "Penguin",
-  "Kangaroo",
-  "Koala",
-  "Panda",
-  "Hippo",
-  "Rhino",
-  "Crocodile",
-  "Dolphin",
-  "Octopus",
-  "Eagle",
-  "Owl",
-  "Otter",
-  "Lizard",
-  "Snake",
-  "T-Rex",
-  "Tuna",
-  "Chicken",
-  "Cow",
-];
-
 export const DEFAULT_EMOJIS = [
   "🦁",
   "🐯",

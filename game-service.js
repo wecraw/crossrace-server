@@ -1,7 +1,6 @@
 import { Firestore, FieldValue } from "@google-cloud/firestore";
 import {
   GAME_CONFIG,
-  ANIMAL_NICKNAMES,
   DEFAULT_EMOJIS,
   COLOR_PALETTE,
   FIRESTORE_CONFIG,
