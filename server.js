@@ -207,10 +207,10 @@ io.on("connection", (socket) => {
           winnerDisplayName: updatedGame.lastGameEnd.winnerDisplayName,
           winnerEmoji: updatedGame.lastGameEnd.winnerEmoji,
           winnerColor: updatedGame.lastGameEnd.winnerColor,
-          condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid), // Parse back from string
+          condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid),
           time: updatedGame.lastGameEnd.time,
-          players: updatedGame.players, // Simplified: Always send the full current player list
-          lastGameEndTimestamp: updatedGame.lastGameEndTimestamp?.toDate(), // Add timestamp here
+          players: updatedGame.players,
+          lastGameEndTimestamp: updatedGame.lastGameEndTimestamp?.toDate(),
         };
       }
 
@@ -305,8 +305,8 @@ io.on("connection", (socket) => {
         winnerEmoji: winner.playerEmoji,
         winnerColor: winner.playerColor,
         condensedGrid,
-        time: winTime, // Use server-calculated time
-        players: updatedGame.players, // Simplified: Send the full, updated player list
+        time: winTime,
+        players: updatedGame.players,
         lastGameEndTimestamp: latestGameData.lastGameEndTimestamp.toDate(),
       };
 
@@ -419,7 +419,7 @@ io.on("connection", (socket) => {
             `Marked player with connection ${socket.id} as disconnected in game ${game.gameCode}`
           );
         } else if (updatedPlayers) {
-          // This case handles when an empty array is returned, meaning the game was deleted.
+          // empty array is returned, meaning the game was deleted
           console.log(
             `Game ${game.gameCode} deleted after final player disconnected.`
           );
