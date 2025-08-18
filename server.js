@@ -210,6 +210,7 @@ io.on("connection", (socket) => {
           condensedGrid: JSON.parse(updatedGame.lastGameEnd.condensedGrid), // Parse back from string
           time: updatedGame.lastGameEnd.time,
           players: updatedGame.players, // Simplified: Always send the full current player list
+          lastGameEndTimestamp: updatedGame.lastGameEndTimestamp?.toDate(), // Add timestamp here
         };
       }
 
