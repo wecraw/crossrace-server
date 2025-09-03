@@ -22,17 +22,14 @@ function getUniqueEmoji(existingPlayers = []) {
   const usedEmojis = new Set(
     existingPlayers.map((p) => p.playerEmoji).filter(Boolean)
   );
-
   // Handle case where all emojis are used to prevent infinite loops
   if (usedEmojis.size >= DEFAULT_EMOJIS.length) {
     return DEFAULT_EMOJIS[Math.floor(Math.random() * DEFAULT_EMOJIS.length)];
   }
-
   do {
     const index = Math.floor(Math.random() * DEFAULT_EMOJIS.length);
     playerEmoji = DEFAULT_EMOJIS[index];
   } while (usedEmojis.has(playerEmoji));
-
   return playerEmoji;
 }
 
@@ -48,7 +45,6 @@ function getTTLTimestamp() {
 }
 
 // --- Firestore Functions ---
-
 export async function createGame(playerId, connectionId, displayName) {
   const gamesRef = db.collection(FIRESTORE_CONFIG.GAMES_COLLECTION);
   const maxRetries = 10; // Prevent an infinite loop in case of high traffic
@@ -94,7 +90,6 @@ export async function createGame(playerId, connectionId, displayName) {
         // CASE 2: The room code exists. Check if it's expired and can be reused.
         const existingGame = gameDoc.data();
         const ttl = existingGame.ttl?.toDate(); // Safely access and convert timestamp
-
         if (ttl && ttl < new Date()) {
           // CASE 2a: The game is expired (TTL is in the past). Reuse it.
           console.log(`Code ${gameCode} exists but is expired. Reusing.`);
@@ -170,6 +165,7 @@ export async function findGameByConnectionId(connectionId) {
   const querySnapshot = await db
     .collection(FIRESTORE_CONFIG.GAMES_COLLECTION)
     .get();
+
   querySnapshot.forEach((doc) => {
     const game = doc.data();
     if (
@@ -179,6 +175,7 @@ export async function findGameByConnectionId(connectionId) {
       gameDoc = game;
     }
   });
+
   return gameDoc;
 }
 
@@ -233,6 +230,7 @@ export async function addPlayerToGame(
       ttl: getTTLTimestamp(),
       lastActivity: FieldValue.serverTimestamp(),
     });
+
     return { player: existingPlayer, isNew: false };
   } else {
     // --- NEW PLAYER LOGIC ---
@@ -261,6 +259,7 @@ export async function addPlayerToGame(
       ttl: getTTLTimestamp(),
       lastActivity: FieldValue.serverTimestamp(),
     });
+
     return { player: newPlayer, isNew: true };
   }
 }
@@ -311,7 +310,6 @@ export async function setPlayerDisconnected(gameCode, connectionId) {
       console.log(`Game ${gameCode} not found during disconnect handling.`);
       return; // Abort – nothing to update
     }
-
     const data = gameDoc.data();
     let players = data.players || [];
 
@@ -347,6 +345,7 @@ export async function setPlayerDisconnected(gameCode, connectionId) {
 
     // Persist the changes atomically
     transaction.update(gameRef, updateData);
+
     updatedPlayers = players; // Save for return value outside the transaction
   });
 
@@ -362,7 +361,6 @@ export async function removePlayer(gameCode, connectionId) {
 
   let players = gameDoc.data().players;
   const playerToRemove = players.find((p) => p.connectionId === connectionId);
-
   if (!playerToRemove) return players; // Player already removed
 
   let updatedPlayers = players.filter((p) => p.connectionId !== connectionId);
@@ -402,6 +400,7 @@ export async function updatePlayer(gameCode, playerId, updates) {
     ttl: getTTLTimestamp(),
     lastActivity: FieldValue.serverTimestamp(),
   });
+
   return await getGameData(gameCode);
 }
 
@@ -419,7 +418,6 @@ export async function startGame(gameCode, gameSeed) {
 
     // --- Validation ---
     const connectedPlayers = gameData.players.filter((p) => !p.disconnected);
-
     if (connectedPlayers.length < 2) {
       throw new Error("A multiplayer game requires at least 2 players.");
     }
@@ -462,6 +460,7 @@ export function calculateCurrentGameTime(gameStartTime) {
   const startTime = gameStartTime.toDate
     ? gameStartTime.toDate()
     : new Date(gameStartTime);
+
   const now = new Date();
 
   // Calculate elapsed time in milliseconds since game start
@@ -548,4 +547,49 @@ export async function endGame(gameCode, winnerId, condensedGrid) {
     winner,
     winTime: formattedTime, // Return the server-calculated time
   };
+}
+
+/**
+ * Assemble a server-authoritative snapshot of current game state.
+ */
+export async function assembleGameStateSnapshot(gameCode) {
+  const gameData = await getGameData(gameCode);
+  if (!gameData) return null;
+
+  const snapshot = {
+    phase: "LOBBY",
+    gameCode: gameData.gameCode,
+    players: gameData.players || [],
+  };
+
+  if (gameData.state === "playing") {
+    snapshot.phase = "IN_GAME";
+    snapshot.gameData = {
+      gameSeed: gameData.gameSeed,
+      serverElapsedTimeSeconds: calculateCurrentGameTime(
+        gameData.gameStartTime
+      ),
+    };
+  } else if (gameData.state === "waiting" && gameData.lastGameEnd) {
+    snapshot.phase = "POST_GAME";
+    const postGameData = {
+      ...gameData.lastGameEnd,
+      condensedGrid: [],
+      lastGameEndTimestamp: undefined,
+    };
+    try {
+      postGameData.condensedGrid = JSON.parse(
+        gameData.lastGameEnd.condensedGrid
+      );
+    } catch {
+      postGameData.condensedGrid = [];
+    }
+    postGameData.lastGameEndTimestamp =
+      gameData.lastGameEndTimestamp?.toDate() || null;
+    snapshot.postGameData = postGameData;
+  } else {
+    snapshot.phase = "LOBBY";
+  }
+
+  return snapshot;
 }
