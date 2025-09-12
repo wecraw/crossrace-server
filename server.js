@@ -88,7 +88,6 @@ io.on("connection", (socket) => {
           message: "Player name is required.",
         });
       }
-
       const newPlayerId = uuidv4();
       const { gameCode, playerId, players } = await Game.createGame(
         newPlayerId,
@@ -97,7 +96,6 @@ io.on("connection", (socket) => {
       );
 
       socket.join(gameCode);
-
       const newPlayer = players[0];
       console.log(
         `Player ${newPlayer.displayName} (${playerId}) created game ${gameCode}`
@@ -176,15 +174,17 @@ io.on("connection", (socket) => {
       );
 
       socket.join(gameCode);
-
       console.log(
         `Player ${player.displayName} (${finalPlayerId}) joined game ${gameCode}`
       );
 
       const updatedGame = await Game.getGameData(gameCode);
 
-      // Broadcast authoritative snapshot to everyone else in the room
-      const broadcastSnapshot = await Game.assembleGameStateSnapshot(gameCode);
+      // Broadcast authoritative snapshot to everyone else in the room (reuse data)
+      const broadcastSnapshot = await Game.assembleGameStateSnapshot(
+        gameCode,
+        updatedGame
+      );
       if (broadcastSnapshot) {
         socket.broadcast.to(gameCode).emit("message", {
           type: "gameStateSnapshot",
@@ -192,14 +192,17 @@ io.on("connection", (socket) => {
         });
       }
 
-      // Back-compat broadcast for legacy clients
+      // Back-compat broadcast for legacy clients (reuse updatedGame)
       socket.broadcast.to(gameCode).emit("message", {
         type: "playerList",
         players: updatedGame.players,
       });
 
-      // Send join confirmation to the joining player with authoritative snapshot
-      const snapshot = await Game.assembleGameStateSnapshot(gameCode);
+      // Send join confirmation to the joining player with authoritative snapshot (reuse)
+      const snapshot = await Game.assembleGameStateSnapshot(
+        gameCode,
+        updatedGame
+      );
       callback({
         success: true,
         playerId: finalPlayerId,
@@ -224,7 +227,7 @@ io.on("connection", (socket) => {
       await updateGameActivity(gameCode);
 
       // Send an authoritative snapshot instead of partial lists
-      const snapshot = await Game.assembleGameStateSnapshot(gameCode);
+      const snapshot = await Game.assembleGameStateSnapshot(gameCode, gameData);
       if (snapshot) {
         socket.emit("message", { type: "gameStateSnapshot", snapshot });
       }
@@ -249,10 +252,18 @@ io.on("connection", (socket) => {
     "updatePlayer",
     async ({ gameCode, playerId, updates }, callback) => {
       try {
-        await Game.updatePlayer(gameCode, playerId, updates);
+        // Returns fresh gameData; reuse it to avoid extra reads
+        const updatedGame = await Game.updatePlayer(
+          gameCode,
+          playerId,
+          updates
+        );
 
-        // Authoritative snapshot to room
-        const snapshot = await Game.assembleGameStateSnapshot(gameCode);
+        // Authoritative snapshot to room (reuse updatedGame)
+        const snapshot = await Game.assembleGameStateSnapshot(
+          gameCode,
+          updatedGame
+        );
         if (snapshot) {
           io.to(gameCode).emit("message", {
             type: "gameStateSnapshot",
@@ -260,8 +271,7 @@ io.on("connection", (socket) => {
           });
         }
 
-        // Back-compat playerList event
-        const updatedGame = await Game.getGameData(gameCode);
+        // Back-compat playerList event (reuse updatedGame)
         io.to(gameCode).emit("message", {
           type: "playerList",
           players: updatedGame.players,
@@ -289,8 +299,11 @@ io.on("connection", (socket) => {
       const snapshot = await Game.assembleGameStateSnapshot(gameCode);
       io.to(gameCode).emit("message", { type: "gameStateSnapshot", snapshot });
 
-      // Back-compat legacy gameEnded payload
+      // Back-compat legacy gameEnded payload (NULL-SAFE toDate)
       const latestGameData = await Game.getGameData(gameCode);
+      const lastGameEndTs =
+        latestGameData?.lastGameEndTimestamp?.toDate?.() ?? null;
+
       const gameEndedMessage = {
         type: "gameEnded",
         winner: winner.id,
@@ -300,7 +313,7 @@ io.on("connection", (socket) => {
         condensedGrid,
         time: winTime, // Use server-calculated time
         players: updatedGame.players, // Simplified: Send the full, updated player list
-        lastGameEndTimestamp: latestGameData.lastGameEndTimestamp.toDate(),
+        lastGameEndTimestamp: lastGameEndTs,
       };
       io.to(gameCode).emit("message", gameEndedMessage);
 
@@ -344,8 +357,11 @@ io.on("connection", (socket) => {
         playerId
       );
 
-      // Push snapshot with updated ready states
-      const snapshot = await Game.assembleGameStateSnapshot(gameCode);
+      // Push snapshot with updated ready states (reuse updatedGameData)
+      const snapshot = await Game.assembleGameStateSnapshot(
+        gameCode,
+        updatedGameData
+      );
       if (snapshot) {
         io.to(gameCode).emit("message", {
           type: "gameStateSnapshot",
@@ -353,7 +369,7 @@ io.on("connection", (socket) => {
         });
       }
 
-      // Back-compat playerList payload
+      // Back-compat playerList payload (reuse updatedGameData)
       io.to(gameCode).emit("message", {
         type: "playerList",
         players: updatedGameData.players,
@@ -377,7 +393,6 @@ io.on("connection", (socket) => {
       // Find the player who sent the click to get their color
       const gameData = await Game.getGameData(gameCode);
       if (!gameData) return; // Game not found, do nothing.
-
       const clickingPlayer = gameData.players.find(
         (p) => p.connectionId === socket.id
       );
@@ -402,6 +417,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", async () => {
     console.log(`Client disconnected: ${socket.id}`);
     try {
+      // Fast lookup via connection index
       const game = await Game.findGameByConnectionId(socket.id);
       if (game) {
         const updatedPlayers = await Game.setPlayerDisconnected(
@@ -435,6 +451,9 @@ io.on("connection", (socket) => {
           );
         }
       }
+
+      // Ensure the index is cleared even if no game doc was found
+      await Game.deleteConnectionIndex(socket.id);
     } catch (error) {
       console.error(`Error handling disconnect for ${socket.id}:`, error);
     }
